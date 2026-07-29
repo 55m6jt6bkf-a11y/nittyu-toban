@@ -52,7 +52,7 @@
     <main class="flex-grow overflow-auto p-4 sm:p-6 lg:p-8">
         <div class="max-w-screen-2xl mx-auto grid grid-cols-1 xl:grid-cols-4 gap-6">
             
-            <!-- Left Column: Settings and Members (Takes 3 columns on XL screens) -->
+            <!-- Left Column: Settings and Members -->
             <div class="xl:col-span-3 space-y-6">
                 
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -73,11 +73,20 @@
                 </section>
 
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div class="bg-navy-800 px-5 py-3 text-white flex justify-between items-center">
+                    <div class="bg-navy-800 px-5 py-3 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <h2 class="font-semibold"><i class="fa-solid fa-users-gear mr-2"></i>対象者と除外条件（日付をカンマ区切りで入力）</h2>
-                        <button onclick="addMember()" class="bg-navy-600 hover:bg-navy-500 text-white text-xs py-1 px-3 rounded shadow transition flex items-center">
-                            <i class="fa-solid fa-user-plus mr-1"></i>人員追加
-                        </button>
+                        <div class="flex gap-2">
+                            <button onclick="exportCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="Excel用CSVファイルとして出力">
+                                <i class="fa-solid fa-file-excel mr-1"></i>表を出力
+                            </button>
+                            <button onclick="document.getElementById('csvFileInput').click()" class="bg-yellow-600 hover:bg-yellow-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="Excel用CSVファイルを読み込み">
+                                <i class="fa-solid fa-upload mr-1"></i>表を読込
+                            </button>
+                            <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="importCSV(event)">
+                            <button onclick="addMember()" class="bg-navy-600 hover:bg-navy-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center">
+                                <i class="fa-solid fa-user-plus mr-1"></i>人員追加
+                            </button>
+                        </div>
                     </div>
                     
                     <div class="bg-blue-50 p-3 text-xs text-navy-800 border-b border-blue-100 flex flex-wrap gap-4">
@@ -92,7 +101,8 @@
                             <thead class="bg-gray-50">
                                 <tr>
                                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase w-32">名前</th>
-                                    <th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase w-16" title="月の最大担当日数">上限</th>
+                                    <th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase w-16" title="1st Callの最大担当日数">1st上限</th>
+                                    <th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase w-16" title="2nd Callの最大担当日数">2nd上限</th>
                                     <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">当直</th>
                                     <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">消化器当番</th>
                                     <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">外勤・休暇</th>
@@ -120,6 +130,7 @@
                 </div>
             </div>
 
+            <!-- Right Column: Results -->
             <div class="xl:col-span-1 space-y-6">
                 <!-- Results Section -->
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col" style="max-height: 60vh;">
@@ -154,24 +165,24 @@
                     </div>
                 </section>
                 
-                <!-- Summary Section (Will be populated by JS) -->
+                <!-- Summary Section -->
                 <div id="summaryContainer"></div>
             </div>
         </div>
     </main>
 
     <script>
-        // Initial state populated with the exact rules provided by the user
+        // Initial state
         let members = [
-            { id: 1, name: "瓜田宗", maxShifts: 6, douchoku: "18", shoukaki: "", fuzai: "", shinkan: "6,13,20,27" },
-            { id: 2, name: "瓜田愛", maxShifts: 6, douchoku: "", shoukaki: "", fuzai: "", shinkan: "5,12,19,26" },
-            { id: 3, name: "竹本", maxShifts: 6, douchoku: "19", shoukaki: "", fuzai: "", shinkan: "6,13,27" },
-            { id: 4, name: "木内", maxShifts: 6, douchoku: "6", shoukaki: "2,24", fuzai: "4,5", shinkan: "14,21,28" },
-            { id: 5, name: "田島", maxShifts: 6, douchoku: "27", shoukaki: "25", fuzai: "", shinkan: "4,18,25" },
-            { id: 6, name: "巽", maxShifts: 6, douchoku: "", shoukaki: "6,16", fuzai: "14,21", shinkan: "7,10,24,31" },
-            { id: 7, name: "齋藤", maxShifts: 6, douchoku: "30", shoukaki: "23", fuzai: "7", shinkan: "3,17" },
-            { id: 8, name: "八子", maxShifts: 6, douchoku: "", shoukaki: "18,26", fuzai: "28", shinkan: "4" },
-            { id: 9, name: "山田", maxShifts: 6, douchoku: "", shoukaki: "3,20", fuzai: "14", shinkan: "20" }
+            { id: 1, name: "瓜田宗", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "18", shoukaki: "", fuzai: "", shinkan: "6,13,20,27" },
+            { id: 2, name: "瓜田愛", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "", fuzai: "", shinkan: "5,12,19,26" },
+            { id: 3, name: "竹本", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "19", shoukaki: "", fuzai: "", shinkan: "6,13,27" },
+            { id: 4, name: "木内", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "6", shoukaki: "2,24", fuzai: "4,5", shinkan: "14,21,28" },
+            { id: 5, name: "田島", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "27", shoukaki: "25", fuzai: "", shinkan: "4,18,25" },
+            { id: 6, name: "巽", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "6,16", fuzai: "14,21", shinkan: "7,10,24,31" },
+            { id: 7, name: "齋藤", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "30", shoukaki: "23", fuzai: "7", shinkan: "3,17" },
+            { id: 8, name: "八子", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "18,26", fuzai: "28", shinkan: "4" },
+            { id: 9, name: "山田", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "3,20", fuzai: "14", shinkan: "20" }
         ];
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -197,7 +208,10 @@
                         <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.name}" onchange="updateMember(${member.id}, 'name', this.value)">
                     </td>
                     <td class="px-2 py-2">
-                        <input type="number" min="0" class="w-full text-center border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.maxShifts}" onchange="updateMember(${member.id}, 'maxShifts', this.value)">
+                        <input type="number" min="0" class="w-full text-center border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.maxFirstShifts}" onchange="updateMember(${member.id}, 'maxFirstShifts', this.value)">
+                    </td>
+                    <td class="px-2 py-2">
+                        <input type="number" min="0" class="w-full text-center border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.maxSecondShifts}" onchange="updateMember(${member.id}, 'maxSecondShifts', this.value)">
                     </td>
                     <td class="px-2 py-2">
                         <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.douchoku}" onchange="updateMember(${member.id}, 'douchoku', this.value)" placeholder="例: 1,2">
@@ -225,7 +239,7 @@
             members.push({
                 id: generateId(),
                 name: `新規担当者`,
-                maxShifts: 6,
+                maxFirstShifts: 3, maxSecondShifts: 3,
                 douchoku: "", shoukaki: "", fuzai: "", shinkan: ""
             });
             renderMembers();
@@ -239,7 +253,11 @@
         function updateMember(id, field, value) {
             const member = members.find(m => m.id === id);
             if (member) {
-                member[field] = field === 'maxShifts' ? parseInt(value) || 0 : value;
+                if(field === 'maxFirstShifts' || field === 'maxSecondShifts') {
+                    member[field] = parseInt(value) || 0;
+                } else {
+                    member[field] = value;
+                }
             }
         }
 
@@ -250,10 +268,93 @@
             setTimeout(() => alertBox.classList.add('hidden'), 5000);
         }
 
+        // --- CSV Export / Import Functions ---
+        function exportCSV() {
+            const header = ["名前", "1st上限", "2nd上限", "当直", "消化器当番", "外勤・休暇", "新患"];
+            const rows = members.map(m => [
+                `"${m.name || ''}"`, 
+                m.maxFirstShifts, 
+                m.maxSecondShifts,
+                `"${m.douchoku || ''}"`, 
+                `"${m.shoukaki || ''}"`, 
+                `"${m.fuzai || ''}"`, 
+                `"${m.shinkan || ''}"`
+            ]);
+            
+            const csvContent = header.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
+            
+            // Add BOM for Excel UTF-8 compatibility
+            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+            const blob = new Blob([bom, csvContent], { type: "text/csv;charset=utf-8;" });
+            
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            link.setAttribute("download", "当番割り振り条件.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function importCSV(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const lines = text.split(/\r\n|\n/).filter(line => line.trim() !== '');
+                if(lines.length <= 1) {
+                    showAlert("データが見つからないか、無効なファイル形式です。");
+                    return;
+                }
+
+                // Helper to parse CSV row handling quotes
+                const parseCSVRow = (str) => {
+                    let result = [], cur = "", inQuotes = false;
+                    for (let i = 0; i < str.length; i++) {
+                        if (str[i] === '"') inQuotes = !inQuotes;
+                        else if (str[i] === ',' && !inQuotes) { result.push(cur.trim()); cur = ""; }
+                        else cur += str[i];
+                    }
+                    result.push(cur.trim());
+                    return result;
+                };
+
+                const newMembers = [];
+                // Skip header (i=0)
+                for (let i = 1; i < lines.length; i++) {
+                    const cols = parseCSVRow(lines[i]);
+                    if(cols.length >= 7) {
+                        newMembers.push({
+                            id: i,
+                            name: cols[0],
+                            maxFirstShifts: parseInt(cols[1]) || 0,
+                            maxSecondShifts: parseInt(cols[2]) || 0,
+                            douchoku: cols[3],
+                            shoukaki: cols[4],
+                            fuzai: cols[5],
+                            shinkan: cols[6]
+                        });
+                    }
+                }
+                
+                if(newMembers.length > 0) {
+                    members = newMembers;
+                    renderMembers();
+                    showAlert("表データを読み込みました！");
+                }
+                // Reset file input
+                document.getElementById('csvFileInput').value = "";
+            };
+            reader.readAsText(file); // Assume UTF-8
+        }
+        // -------------------------------------
+
         function parseDates(dateStr) {
             if (!dateStr) return [];
             return dateStr.split(',')
-                .map(d => parseInt(d.replace(/[^0-9]/g, ''))) // Extract numbers only
+                .map(d => parseInt(d.replace(/[^0-9]/g, '')))
                 .filter(d => !isNaN(d));
         }
 
@@ -265,7 +366,6 @@
             for (let i = 1; i <= daysInMonth; i++) {
                 const date = new Date(year, month - 1, i);
                 const dayOfWeek = date.getDay();
-                // Exclude Weekends (0: Sunday, 6: Saturday) and specified holidays
                 if (dayOfWeek !== 0 && dayOfWeek !== 6 && !holidays.includes(i)) {
                     validDays.push({ date: i, dayName: dayNames[dayOfWeek] });
                 }
@@ -275,7 +375,6 @@
 
         function startGeneration() {
             document.getElementById('loadingIndicator').classList.remove('hidden');
-            // Yield to browser rendering before heavy computation
             setTimeout(() => {
                 generateSchedule();
                 document.getElementById('loadingIndicator').classList.add('hidden');
@@ -292,7 +391,6 @@
             
             if(members.length === 0) { showAlert("対象者がいません。"); return; }
 
-            // Pre-process exclusion sets for ultra-fast lookup during iteration
             const parsedMembers = members.map(m => {
                 const douchoku = parseDates(m.douchoku);
                 const shoukaki = parseDates(m.shoukaki);
@@ -300,10 +398,8 @@
                 const shinkan = parseDates(m.shinkan);
 
                 let absoluteExclusions = new Set([...fuzai, ...douchoku]);
-                // Rule 2: 当直の翌日除外
-                douchoku.forEach(d => absoluteExclusions.add(d + 1));
-                // Rule 3: 消化器当番の翌日除外
-                shoukaki.forEach(d => absoluteExclusions.add(d + 1));
+                douchoku.forEach(d => absoluteExclusions.add(d + 1)); // 当直翌日除外
+                shoukaki.forEach(d => absoluteExclusions.add(d + 1)); // 消化器翌日除外
 
                 return {
                     ...m,
@@ -314,12 +410,12 @@
 
             let bestSchedule = null;
             let bestScore = -Infinity;
-            const ITERATIONS = 15000; // Increased iterations for better balancing
+            const ITERATIONS = 15000;
 
             for (let i = 0; i < ITERATIONS; i++) {
                 let currentSchedule = [];
                 let counts = {};
-                parsedMembers.forEach(m => counts[m.id] = { total: 0, first: 0, second: 0 });
+                parsedMembers.forEach(m => counts[m.id] = { first: 0, second: 0, total: 0 });
                 
                 let iterationScore = 0;
 
@@ -329,48 +425,42 @@
                     // --- Assign 1st Call ---
                     let avail1st = parsedMembers.filter(m => 
                         !m.absoluteExclusions.has(date) && 
-                        !m.shinkanExclusions.has(date) && // Rule 5: 新患は1st不可
-                        counts[m.id].total < m.maxShifts
+                        !m.shinkanExclusions.has(date) && 
+                        counts[m.id].first < m.maxFirstShifts // Check 1st Shift Limit
                     );
 
-                    // Greedy Randomization for 1st Call: Favor those with fewer 1st calls and fewer total calls
                     avail1st.sort(() => Math.random() - 0.5);
                     avail1st.sort((a, b) => counts[a.id].first - counts[b.id].first);
-                    avail1st.sort((a, b) => counts[a.id].total - counts[b.id].total);
-
+                    
                     let firstCall = avail1st.length > 0 ? avail1st[0] : null;
                     if (firstCall) {
-                        counts[firstCall.id].total++;
                         counts[firstCall.id].first++;
+                        counts[firstCall.id].total++;
                     } else {
-                        iterationScore -= 100000; // Heavy penalty if no one can take 1st call (though rule says leave blank if impossible)
+                        iterationScore -= 100000; 
                     }
 
                     // --- Assign 2nd Call ---
                     let avail2nd = parsedMembers.filter(m => 
                         !m.absoluteExclusions.has(date) && 
-                        counts[m.id].total < m.maxShifts &&
-                        (!firstCall || m.id !== firstCall.id) // Ensure same person doesn't do both
+                        counts[m.id].second < m.maxSecondShifts && // Check 2nd Shift Limit
+                        (!firstCall || m.id !== firstCall.id) 
                     );
 
-                    // Greedy Randomization for 2nd Call
                     avail2nd.sort(() => Math.random() - 0.5);
-                    // Crucial: Strongly prefer assigning to people who DO NOT have '新患' today
                     avail2nd.sort((a, b) => {
                         const aHasShinkan = a.shinkanExclusions.has(date) ? 1 : 0;
                         const bHasShinkan = b.shinkanExclusions.has(date) ? 1 : 0;
                         return aHasShinkan - bHasShinkan;
                     });
                     avail2nd.sort((a, b) => counts[a.id].second - counts[b.id].second);
-                    avail2nd.sort((a, b) => counts[a.id].total - counts[b.id].total);
 
                     let secondCall = avail2nd.length > 0 ? avail2nd[0] : null;
                     let isWarning = false;
 
                     if (secondCall) {
-                        counts[secondCall.id].total++;
                         counts[secondCall.id].second++;
-                        // Penalize if 2nd call had to be assigned to someone on 新患 duty
+                        counts[secondCall.id].total++;
                         if(secondCall.shinkanExclusions.has(date)) {
                             iterationScore -= 5000; 
                             isWarning = true;
@@ -382,31 +472,21 @@
                     currentSchedule.push({
                         date: date,
                         dayName: day.dayName,
-                        first: firstCall ? firstCall.name : '空欄',
-                        second: secondCall ? secondCall.name : '空欄',
+                        first: firstCall ? firstCall.name : '割当不可',
+                        second: secondCall ? secondCall.name : '割当不可',
                         isWarning: isWarning
                     });
                 }
 
-                // --- Evaluate Schedule Quality ---
-                
-                // 1. Total Shifts Equity Penalty (Variance)
-                let totalCountsArr = Object.values(counts).map(c => c.total);
-                let avgTotal = totalCountsArr.reduce((a, b) => a + b, 0) / totalCountsArr.length;
-                let varianceTotal = totalCountsArr.reduce((a, b) => a + Math.pow(b - avgTotal, 2), 0);
-                iterationScore -= varianceTotal * 200; // Strong penalty for uneven total shifts
+                // Balance penalty optimization
+                let varianceTotal = Object.values(counts).reduce((sum, c) => sum + Math.pow(c.total, 2), 0);
+                iterationScore -= varianceTotal * 50; 
 
-                // 2. 1st vs 2nd Call Balance Penalty per person
-                let balancePenalty = Object.values(counts).reduce((sum, c) => sum + Math.abs(c.first - c.second), 0);
-                iterationScore -= balancePenalty * 50;
-
-                // Update best score
                 if (iterationScore > bestScore) {
                     bestScore = iterationScore;
                     bestSchedule = currentSchedule;
                 }
 
-                // Early exit if structurally perfect (0 penalties)
                 if(iterationScore === 0) break;
             }
 
@@ -425,11 +505,25 @@
             schedule.forEach(day => {
                 const tr = document.createElement('tr');
                 
-                const firstClass = day.first === '空欄' ? 'text-red-500 font-bold bg-red-50' : 'text-navy-900 font-medium';
-                const secondClass = day.second === '空欄' ? 'text-red-500 font-bold bg-red-50' : 'text-gray-700';
-                
-                // Add warning icon for 2nd call if it violates soft constraint (assigned on shinkan day)
-                const warningIcon = day.isWarning ? `<i class="fa-solid fa-triangle-exclamation text-orange-500 mr-1.5" title="新患担当日ですが、やむを得ず2ndに割り当てられました"></i>` : '';
+                // Format for unassigned slots (Red background, bold text)
+                let firstContent, firstClass;
+                if (day.first === '割当不可') {
+                    firstContent = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>割当不可`;
+                    firstClass = 'bg-red-100 text-red-700 font-bold border border-red-200';
+                } else {
+                    firstContent = day.first;
+                    firstClass = 'text-navy-900 font-medium';
+                }
+
+                let secondContent, secondClass;
+                if (day.second === '割当不可') {
+                    secondContent = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>割当不可`;
+                    secondClass = 'bg-red-100 text-red-700 font-bold border border-red-200';
+                } else {
+                    const warningIcon = day.isWarning ? `<i class="fa-solid fa-triangle-exclamation text-orange-500 mr-1.5" title="新患担当日ですが、やむを得ず2ndに割り当てられました"></i>` : '';
+                    secondContent = `${warningIcon}${day.second}`;
+                    secondClass = 'text-gray-700';
+                }
 
                 tr.className = `transition hover:bg-navy-50/50 border-b border-gray-100`;
                 tr.innerHTML = `
@@ -437,10 +531,10 @@
                         <span class="font-bold text-base">${day.date}</span><span class="text-xs ml-1 text-gray-500">(${day.dayName})</span>
                     </td>
                     <td class="px-3 py-2 whitespace-nowrap ${firstClass}">
-                        ${day.first}
+                        ${firstContent}
                     </td>
                     <td class="px-3 py-2 whitespace-nowrap ${secondClass}">
-                        ${warningIcon}${day.second}
+                        ${secondContent}
                     </td>
                 `;
                 tbody.appendChild(tr);
@@ -453,13 +547,12 @@
             const shiftCounts = {};
             members.forEach(m => shiftCounts[m.name] = { first: 0, second: 0, total: 0 });
 
-            // Tally up the shifts
             schedule.forEach(day => {
-                if (day.first !== '空欄' && shiftCounts[day.first]) {
+                if (day.first !== '割当不可' && shiftCounts[day.first]) {
                     shiftCounts[day.first].first++;
                     shiftCounts[day.first].total++;
                 }
-                if (day.second !== '空欄' && shiftCounts[day.second]) {
+                if (day.second !== '割当不可' && shiftCounts[day.second]) {
                     shiftCounts[day.second].second++;
                     shiftCounts[day.second].total++;
                 }
@@ -528,8 +621,10 @@
                     
                     let first = cols[1].innerText.trim();
                     let second = cols[2].innerText.trim();
-                    // Strip hidden icon texts if any exist during copy
-                    second = second.replace(/<[^>]*>?/gm, '').trim(); 
+                    
+                    // Strip icon texts and warning messages for clean Excel paste
+                    first = first.replace(/<[^>]*>?/gm, '').replace('割当不可', '不可').trim(); 
+                    second = second.replace(/<[^>]*>?/gm, '').replace('割当不可', '不可').trim(); 
 
                     text += `${dateNum}\t${dayName}\t${first}\t${second}\n`;
                 }
@@ -550,3 +645,4 @@
     </script>
 </body>
 </html>
+
