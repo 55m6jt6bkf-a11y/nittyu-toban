@@ -32,7 +32,7 @@
         body { font-family: 'Inter', 'Hiragino Sans', 'Meiryo', sans-serif; background-color: #f0f4f8; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        input[type="text"], input[type="number"] { font-size: 0.875rem; }
+        input[type="text"], input[type="number"], select { font-size: 0.875rem; }
     </style>
 </head>
 <body class="text-gray-800 h-screen flex flex-col">
@@ -91,7 +91,7 @@
                     
                     <div class="bg-blue-50 p-3 text-xs text-navy-800 border-b border-blue-100 flex flex-wrap gap-4">
                         <div><strong class="text-navy-900 font-bold">当直:</strong> 当日と翌日を除外</div>
-                        <div><strong class="text-navy-900 font-bold">消化器:</strong> 翌日を除外</div>
+                        <div><strong class="text-navy-900 font-bold">消化器当番:</strong> 翌日を除外</div>
                         <div><strong class="text-navy-900 font-bold">外勤/休暇:</strong> 当日を除外</div>
                         <div><strong class="text-navy-900 font-bold">新患:</strong> 1stを除外（2ndは極力回避）</div>
                     </div>
@@ -100,7 +100,8 @@
                         <table class="min-w-full divide-y divide-gray-200">
                             <thead class="bg-gray-50">
                                 <tr>
-                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase w-32">名前</th>
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase w-28">名前</th>
+                                    <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase w-36">属性</th>
                                     <th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase w-16" title="1st Callの最大担当日数">1st上限</th>
                                     <th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase w-16" title="2nd Callの最大担当日数">2nd上限</th>
                                     <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">当直</th>
@@ -172,17 +173,25 @@
     </main>
 
     <script>
-        // Initial state
+        // Role mappings for UI and Logic
+        const roleMapToJa = { 'pgy1': '専攻医1年目', 'pgy23': '専攻医2・3年目', 'staff': '教員・スタッフ' };
+        const jaToRoleMap = { '専攻医1年目': 'pgy1', '専攻医2・3年目': 'pgy23', '教員・スタッフ': 'staff' };
+
+        // Priority Weights (Lower number = Higher priority)
+        const roleWeight1st = { 'pgy1': 1, 'pgy23': 2, 'staff': 3 };
+        const roleWeight2nd = { 'staff': 1, 'pgy23': 2, 'pgy1': 3 };
+
+        // Initial state with roles added
         let members = [
-            { id: 1, name: "瓜田宗", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "18", shoukaki: "", fuzai: "", shinkan: "6,13,20,27" },
-            { id: 2, name: "瓜田愛", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "", fuzai: "", shinkan: "5,12,19,26" },
-            { id: 3, name: "竹本", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "19", shoukaki: "", fuzai: "", shinkan: "6,13,27" },
-            { id: 4, name: "木内", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "6", shoukaki: "2,24", fuzai: "4,5", shinkan: "14,21,28" },
-            { id: 5, name: "田島", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "27", shoukaki: "25", fuzai: "", shinkan: "4,18,25" },
-            { id: 6, name: "巽", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "6,16", fuzai: "14,21", shinkan: "7,10,24,31" },
-            { id: 7, name: "齋藤", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "30", shoukaki: "23", fuzai: "7", shinkan: "3,17" },
-            { id: 8, name: "八子", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "18,26", fuzai: "28", shinkan: "4" },
-            { id: 9, name: "山田", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "3,20", fuzai: "14", shinkan: "20" }
+            { id: 1, name: "瓜田宗", role: "pgy1", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "18", shoukaki: "", fuzai: "", shinkan: "6,13,20,27" },
+            { id: 2, name: "瓜田愛", role: "pgy1", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "", fuzai: "", shinkan: "5,12,19,26" },
+            { id: 3, name: "竹本", role: "pgy23", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "19", shoukaki: "", fuzai: "", shinkan: "6,13,27" },
+            { id: 4, name: "木内", role: "pgy23", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "6", shoukaki: "2,24", fuzai: "4,5", shinkan: "14,21,28" },
+            { id: 5, name: "田島", role: "staff", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "27", shoukaki: "25", fuzai: "", shinkan: "4,18,25" },
+            { id: 6, name: "巽", role: "staff", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "6,16", fuzai: "14,21", shinkan: "7,10,24,31" },
+            { id: 7, name: "齋藤", role: "staff", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "30", shoukaki: "23", fuzai: "7", shinkan: "3,17" },
+            { id: 8, name: "八子", role: "pgy1", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "18,26", fuzai: "28", shinkan: "4" },
+            { id: 9, name: "山田", role: "pgy23", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "3,20", fuzai: "14", shinkan: "20" }
         ];
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -205,25 +214,32 @@
                 tr.className = "hover:bg-blue-50/50 transition-colors duration-150";
                 tr.innerHTML = `
                     <td class="px-2 py-2">
-                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.name}" onchange="updateMember(${member.id}, 'name', this.value)">
+                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow text-sm" value="${member.name}" onchange="updateMember(${member.id}, 'name', this.value)">
                     </td>
                     <td class="px-2 py-2">
-                        <input type="number" min="0" class="w-full text-center border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.maxFirstShifts}" onchange="updateMember(${member.id}, 'maxFirstShifts', this.value)">
+                        <select class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow text-xs text-gray-700 bg-white" onchange="updateMember(${member.id}, 'role', this.value)">
+                            <option value="pgy1" ${member.role === 'pgy1' ? 'selected' : ''}>専攻医1年目</option>
+                            <option value="pgy23" ${member.role === 'pgy23' ? 'selected' : ''}>専攻医2・3年目</option>
+                            <option value="staff" ${member.role === 'staff' ? 'selected' : ''}>教員・スタッフ</option>
+                        </select>
                     </td>
                     <td class="px-2 py-2">
-                        <input type="number" min="0" class="w-full text-center border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.maxSecondShifts}" onchange="updateMember(${member.id}, 'maxSecondShifts', this.value)">
+                        <input type="number" min="0" class="w-full text-center border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow text-sm" value="${member.maxFirstShifts}" onchange="updateMember(${member.id}, 'maxFirstShifts', this.value)">
                     </td>
                     <td class="px-2 py-2">
-                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.douchoku}" onchange="updateMember(${member.id}, 'douchoku', this.value)" placeholder="例: 1,2">
+                        <input type="number" min="0" class="w-full text-center border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow text-sm" value="${member.maxSecondShifts}" onchange="updateMember(${member.id}, 'maxSecondShifts', this.value)">
                     </td>
                     <td class="px-2 py-2">
-                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.shoukaki}" onchange="updateMember(${member.id}, 'shoukaki', this.value)">
+                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow text-sm" value="${member.douchoku}" onchange="updateMember(${member.id}, 'douchoku', this.value)" placeholder="例: 1,2">
                     </td>
                     <td class="px-2 py-2">
-                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.fuzai}" onchange="updateMember(${member.id}, 'fuzai', this.value)">
+                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow text-sm" value="${member.shoukaki}" onchange="updateMember(${member.id}, 'shoukaki', this.value)">
                     </td>
                     <td class="px-2 py-2">
-                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow" value="${member.shinkan}" onchange="updateMember(${member.id}, 'shinkan', this.value)">
+                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow text-sm" value="${member.fuzai}" onchange="updateMember(${member.id}, 'fuzai', this.value)">
+                    </td>
+                    <td class="px-2 py-2">
+                        <input type="text" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 focus:ring focus:ring-navy-200 focus:ring-opacity-50 border p-1.5 transition-shadow text-sm" value="${member.shinkan}" onchange="updateMember(${member.id}, 'shinkan', this.value)">
                     </td>
                     <td class="px-2 py-2 text-center">
                         <button onclick="removeMember(${member.id})" class="text-red-400 hover:text-red-600 transition-colors p-1 rounded hover:bg-red-50" title="削除">
@@ -239,6 +255,7 @@
             members.push({
                 id: generateId(),
                 name: `新規担当者`,
+                role: "pgy1", // Default role
                 maxFirstShifts: 3, maxSecondShifts: 3,
                 douchoku: "", shoukaki: "", fuzai: "", shinkan: ""
             });
@@ -270,9 +287,10 @@
 
         // --- CSV Export / Import Functions ---
         function exportCSV() {
-            const header = ["名前", "1st上限", "2nd上限", "当直", "消化器当番", "外勤・休暇", "新患"];
+            const header = ["名前", "属性", "1st上限", "2nd上限", "当直", "消化器当番", "外勤・休暇", "新患"];
             const rows = members.map(m => [
                 `"${m.name || ''}"`, 
+                `"${roleMapToJa[m.role] || ''}"`, 
                 m.maxFirstShifts, 
                 m.maxSecondShifts,
                 `"${m.douchoku || ''}"`, 
@@ -309,7 +327,6 @@
                     return;
                 }
 
-                // Helper to parse CSV row handling quotes
                 const parseCSVRow = (str) => {
                     let result = [], cur = "", inQuotes = false;
                     for (let i = 0; i < str.length; i++) {
@@ -322,19 +339,22 @@
                 };
 
                 const newMembers = [];
-                // Skip header (i=0)
                 for (let i = 1; i < lines.length; i++) {
                     const cols = parseCSVRow(lines[i]);
-                    if(cols.length >= 7) {
+                    if(cols.length >= 8) {
+                        const roleJa = cols[1];
+                        const mappedRole = jaToRoleMap[roleJa] || 'pgy1'; // fallback
+
                         newMembers.push({
                             id: i,
                             name: cols[0],
-                            maxFirstShifts: parseInt(cols[1]) || 0,
-                            maxSecondShifts: parseInt(cols[2]) || 0,
-                            douchoku: cols[3],
-                            shoukaki: cols[4],
-                            fuzai: cols[5],
-                            shinkan: cols[6]
+                            role: mappedRole,
+                            maxFirstShifts: parseInt(cols[2]) || 0,
+                            maxSecondShifts: parseInt(cols[3]) || 0,
+                            douchoku: cols[4],
+                            shoukaki: cols[5],
+                            fuzai: cols[6],
+                            shinkan: cols[7]
                         });
                     }
                 }
@@ -344,10 +364,9 @@
                     renderMembers();
                     showAlert("表データを読み込みました！");
                 }
-                // Reset file input
                 document.getElementById('csvFileInput').value = "";
             };
-            reader.readAsText(file); // Assume UTF-8
+            reader.readAsText(file); 
         }
         // -------------------------------------
 
@@ -426,34 +445,56 @@
                     let avail1st = parsedMembers.filter(m => 
                         !m.absoluteExclusions.has(date) && 
                         !m.shinkanExclusions.has(date) && 
-                        counts[m.id].first < m.maxFirstShifts // Check 1st Shift Limit
+                        counts[m.id].first < m.maxFirstShifts
                     );
 
-                    avail1st.sort(() => Math.random() - 0.5);
-                    avail1st.sort((a, b) => counts[a.id].first - counts[b.id].first);
+                    // 1st Call Priority Logic
+                    avail1st.sort((a, b) => {
+                        // 1. Role priority (pgy1 > pgy23 > staff)
+                        const weightDiff = roleWeight1st[a.role] - roleWeight1st[b.role];
+                        if (weightDiff !== 0) return weightDiff;
+                        
+                        // 2. Equalize shifts within the same role
+                        const countDiff = counts[a.id].first - counts[b.id].first;
+                        if (countDiff !== 0) return countDiff;
+                        
+                        // 3. Randomize if tie
+                        return Math.random() - 0.5;
+                    });
                     
                     let firstCall = avail1st.length > 0 ? avail1st[0] : null;
                     if (firstCall) {
                         counts[firstCall.id].first++;
                         counts[firstCall.id].total++;
                     } else {
-                        iterationScore -= 100000; 
+                        iterationScore -= 100000; // Penalize heavy if unassigned
                     }
 
                     // --- Assign 2nd Call ---
                     let avail2nd = parsedMembers.filter(m => 
                         !m.absoluteExclusions.has(date) && 
-                        counts[m.id].second < m.maxSecondShifts && // Check 2nd Shift Limit
+                        counts[m.id].second < m.maxSecondShifts &&
                         (!firstCall || m.id !== firstCall.id) 
                     );
 
-                    avail2nd.sort(() => Math.random() - 0.5);
+                    // 2nd Call Priority Logic
                     avail2nd.sort((a, b) => {
+                        // 1. Avoid Shinkan duty
                         const aHasShinkan = a.shinkanExclusions.has(date) ? 1 : 0;
                         const bHasShinkan = b.shinkanExclusions.has(date) ? 1 : 0;
-                        return aHasShinkan - bHasShinkan;
+                        if (aHasShinkan !== bHasShinkan) return aHasShinkan - bHasShinkan;
+                        
+                        // 2. Equalize shifts overall
+                        const countDiff = counts[a.id].second - counts[b.id].second;
+                        if (countDiff !== 0) return countDiff;
+
+                        // 3. Prefer staff for 2nd call (staff > pgy23 > pgy1) if counts are equal
+                        const weightDiff = roleWeight2nd[a.role] - roleWeight2nd[b.role];
+                        if (weightDiff !== 0) return weightDiff;
+
+                        // 4. Randomize
+                        return Math.random() - 0.5;
                     });
-                    avail2nd.sort((a, b) => counts[a.id].second - counts[b.id].second);
 
                     let secondCall = avail2nd.length > 0 ? avail2nd[0] : null;
                     let isWarning = false;
@@ -461,6 +502,7 @@
                     if (secondCall) {
                         counts[secondCall.id].second++;
                         counts[secondCall.id].total++;
+                        // Penalize if forced to assign to Shinkan person
                         if(secondCall.shinkanExclusions.has(date)) {
                             iterationScore -= 5000; 
                             isWarning = true;
@@ -478,9 +520,9 @@
                     });
                 }
 
-                // Balance penalty optimization
+                // Evaluate Schedule Quality (Add penalty for unbalanced total shifts to encourage variety)
                 let varianceTotal = Object.values(counts).reduce((sum, c) => sum + Math.pow(c.total, 2), 0);
-                iterationScore -= varianceTotal * 50; 
+                iterationScore -= varianceTotal * 20; 
 
                 if (iterationScore > bestScore) {
                     bestScore = iterationScore;
@@ -505,13 +547,12 @@
             schedule.forEach(day => {
                 const tr = document.createElement('tr');
                 
-                // Format for unassigned slots (Red background, bold text)
                 let firstContent, firstClass;
                 if (day.first === '割当不可') {
                     firstContent = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>割当不可`;
                     firstClass = 'bg-red-100 text-red-700 font-bold border border-red-200';
                 } else {
-                    firstContent = day.first;
+                    firstContent = day.first; // 属性は表示しない
                     firstClass = 'text-navy-900 font-medium';
                 }
 
@@ -521,7 +562,7 @@
                     secondClass = 'bg-red-100 text-red-700 font-bold border border-red-200';
                 } else {
                     const warningIcon = day.isWarning ? `<i class="fa-solid fa-triangle-exclamation text-orange-500 mr-1.5" title="新患担当日ですが、やむを得ず2ndに割り当てられました"></i>` : '';
-                    secondContent = `${warningIcon}${day.second}`;
+                    secondContent = `${warningIcon}${day.second}`; // 属性は表示しない
                     secondClass = 'text-gray-700';
                 }
 
@@ -622,7 +663,6 @@
                     let first = cols[1].innerText.trim();
                     let second = cols[2].innerText.trim();
                     
-                    // Strip icon texts and warning messages for clean Excel paste
                     first = first.replace(/<[^>]*>?/gm, '').replace('割当不可', '不可').trim(); 
                     second = second.replace(/<[^>]*>?/gm, '').replace('割当不可', '不可').trim(); 
 
@@ -645,4 +685,5 @@
     </script>
 </body>
 </html>
+
 
