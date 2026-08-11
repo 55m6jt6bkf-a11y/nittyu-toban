@@ -6,22 +6,20 @@
     <title>日中当番担当割り振りアプリ</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Excel出力用ライブラリ -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
     <script>
         tailwind.config = {
             theme: {
                 extend: {
                     colors: {
                         navy: {
-                            50: '#f0f4f8',
-                            100: '#d9e2ec',
-                            200: '#bcccdc',
-                            300: '#9fb3c8',
-                            400: '#829ab1',
-                            500: '#627d98',
-                            600: '#486581',
-                            700: '#334e68',
-                            800: '#243b53',
-                            900: '#102a43',
+                            50: '#f0f4f8', 100: '#d9e2ec', 200: '#bcccdc', 300: '#9fb3c8',
+                            400: '#829ab1', 500: '#627d98', 600: '#486581', 700: '#334e68',
+                            800: '#243b53', 900: '#102a43',
                         }
                     }
                 }
@@ -52,14 +50,17 @@
             background-color: #f3f4f6;
         }
         .calendar-day.selected {
-            background-color: #627d98; /* navy-500 */
-            color: white;
-            border-color: #627d98;
+            background-color: #627d98 !important; 
+            color: white !important;
+            border-color: #627d98 !important;
         }
         .calendar-day.disabled {
             color: #d1d5db;
             cursor: not-allowed;
             background-color: #f9fafb;
+        }
+        #syncStatus {
+            transition: opacity 0.5s;
         }
     </style>
 </head>
@@ -70,9 +71,12 @@
             <div class="flex items-center gap-3">
                 <i class="fa-solid fa-user-doctor text-2xl text-blue-300"></i>
                 <h1 class="text-xl font-bold tracking-wider">日中当番担当割り振りアプリ</h1>
+                <span id="syncStatus" class="ml-4 text-xs bg-navy-700 px-2 py-1 rounded text-navy-200 opacity-0">
+                    <i class="fa-solid fa-cloud-arrow-up mr-1"></i>同期完了
+                </span>
             </div>
             <div class="text-sm text-navy-200 hidden sm:block">
-                <i class="fa-solid fa-shield-halved mr-1"></i> 属性考慮・連日回避エンジン搭載
+                <i class="fa-solid fa-shield-halved mr-1"></i> 属性考慮・連日回避エンジン搭載 (Cloud同期)
             </div>
         </div>
     </header>
@@ -81,7 +85,7 @@
         <div class="max-w-screen-2xl mx-auto grid grid-cols-1 xl:grid-cols-4 gap-6">
             
             <!-- Left Column: Settings and Members -->
-            <div class="xl:col-span-3 space-y-6">
+            <div class="xl:col-span-3 space-y-6 relative">
                 
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div class="bg-navy-800 px-5 py-3 text-white">
@@ -94,8 +98,13 @@
                         </div>
                         <div class="sm:col-span-2">
                             <label class="block text-sm font-medium text-gray-700 mb-1">休診日・祝日（除外する日付）</label>
-                            <input type="text" id="holidays" placeholder="例: 11, 12 (カンマ区切り)" class="w-full border-gray-300 rounded-md shadow-sm focus:ring-navy-500 focus:border-navy-500 border p-2 bg-gray-50">
-                            <p class="text-xs text-gray-500 mt-1">※土日は自動的に除外されます。</p>
+                            <div class="relative flex items-center">
+                                <input type="text" id="holidays" placeholder="例: 11, 12 (カンマ区切り)" class="w-full border-gray-300 rounded-md shadow-sm focus:ring-navy-500 focus:border-navy-500 border p-2 pr-10 bg-gray-50">
+                                <button onclick="openHolidayPicker()" class="absolute right-2 text-gray-400 hover:text-navy-600 p-1" title="カレンダーから選択">
+                                    <i class="fa-regular fa-calendar-days text-lg"></i>
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">※土日は自動的に除外されます。年月を変更すると祝日が自動取得されます。</p>
                         </div>
                     </div>
                 </section>
@@ -103,12 +112,16 @@
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div class="bg-navy-800 px-5 py-3 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <h2 class="font-semibold"><i class="fa-solid fa-users-gear mr-2"></i>対象者と除外条件（日付をカンマ区切りで入力）</h2>
-                        <div class="flex gap-2">
-                            <button onclick="exportCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="Excel用CSVファイルとして出力">
-                                <i class="fa-solid fa-file-excel mr-1"></i>表を出力
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="openResetConfirmModal()" class="bg-red-600 hover:bg-red-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="現在の月の除外日をすべてクリアします">
+                                <i class="fa-solid fa-eraser mr-1"></i>除外日リセット
                             </button>
-                            <button onclick="document.getElementById('csvFileInput').click()" class="bg-yellow-600 hover:bg-yellow-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="Excel用CSVファイルを読み込み">
-                                <i class="fa-solid fa-upload mr-1"></i>表を読込
+                            <div class="w-px bg-navy-600 hidden sm:block"></div>
+                            <button onclick="exportCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="条件データをCSVで出力">
+                                <i class="fa-solid fa-file-export mr-1"></i>条件出力
+                            </button>
+                            <button onclick="document.getElementById('csvFileInput').click()" class="bg-yellow-600 hover:bg-yellow-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="条件データをCSVから読込">
+                                <i class="fa-solid fa-file-import mr-1"></i>条件読込
                             </button>
                             <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="importCSV(event)">
                             <button onclick="addMember()" class="bg-navy-600 hover:bg-navy-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center">
@@ -154,7 +167,7 @@
                     </div>
                 </section>
                 
-                <div id="alertBox" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative shadow-sm" role="alert">
+                <div id="alertBox" class="hidden absolute top-0 left-0 w-full z-[60] bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded shadow-md" role="alert">
                     <span class="block sm:inline" id="alertMessage"></span>
                 </div>
             </div>
@@ -163,15 +176,28 @@
             <div class="xl:col-span-1 space-y-6">
                 <!-- Results Section -->
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col" style="max-height: 60vh;">
-                    <div class="bg-navy-900 px-5 py-3 text-white flex justify-between items-center">
-                        <h2 class="font-semibold"><i class="fa-solid fa-calendar-days mr-2"></i>生成結果</h2>
-                        <button onclick="copyToClipboard()" class="text-navy-200 hover:text-white transition focus:outline-none" title="クリップボードにコピー">
-                            <i class="fa-regular fa-copy text-lg"></i>
-                        </button>
+                    <div class="bg-navy-900 px-4 py-3 text-white flex justify-between items-center">
+                        <h2 class="font-semibold text-sm"><i class="fa-solid fa-calendar-days mr-2"></i>生成結果</h2>
+                        <div class="flex gap-4">
+                            <button onclick="exportCalendarExcel()" class="text-green-400 hover:text-green-300 transition focus:outline-none flex items-center" title="カレンダー形式でExcel出力">
+                                <i class="fa-solid fa-file-excel text-lg"></i>
+                            </button>
+                            <button onclick="copyToClipboard()" class="text-navy-200 hover:text-white transition focus:outline-none" title="リスト形式でコピー">
+                                <i class="fa-regular fa-copy text-lg"></i>
+                            </button>
+                            <div class="w-px bg-navy-600"></div>
+                            <button onclick="resetSchedule()" class="text-red-300 hover:text-red-400 transition focus:outline-none" title="結果をリセット">
+                                <i class="fa-solid fa-trash-can text-lg"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="bg-orange-50 p-2 text-xs text-orange-800 border-b border-orange-100 flex items-center gap-2">
                         <i class="fa-solid fa-triangle-exclamation text-orange-500"></i>
-                        <span>新患担当日の2nd Call割り当てを示します</span>
+                        <span>新患担当日の2nd Call割り当て</span>
+                    </div>
+                    <div class="bg-blue-50 p-2 text-xs text-navy-600 border-b border-blue-100 flex items-center gap-2">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                        <span>セルをクリックして担当者の変更・交換</span>
                     </div>
                     <div class="p-0 flex-grow overflow-y-auto hide-scrollbar">
                         <table class="min-w-full divide-y divide-gray-200">
@@ -200,6 +226,7 @@
         </div>
     </main>
 
+    <!-- Modal for Date Picker -->
     <div id="datePickerModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex justify-center items-center">
         <div class="bg-white rounded-xl shadow-xl w-80 overflow-hidden transform transition-all">
             <div class="bg-navy-800 px-4 py-3 flex justify-between items-center text-white">
@@ -232,8 +259,75 @@
         </div>
     </div>
 
-    <script>
-        // Initial state with attributes added
+    <!-- Modal for Editing/Exchanging Schedule -->
+    <div id="editScheduleModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex justify-center items-center">
+        <div class="bg-white rounded-xl shadow-xl w-96 max-w-full overflow-hidden transform transition-all">
+            <div class="bg-navy-800 px-4 py-3 flex justify-between items-center text-white">
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-user-pen mr-2"></i>担当者の変更・交換</h3>
+                <button onclick="closeEditModal()" class="text-navy-200 hover:text-white transition focus:outline-none">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div class="p-4 space-y-4">
+                <div class="flex gap-4">
+                    <div class="flex-1">
+                        <p class="text-xs text-gray-500 mb-1">対象日</p>
+                        <p class="font-bold text-navy-900" id="editModalTarget"></p>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-xs text-gray-500 mb-1">現在の担当</p>
+                        <p class="font-bold text-red-600" id="editModalCurrentName"></p>
+                    </div>
+                </div>
+                <div class="bg-gray-50 p-3 rounded border border-gray-200">
+                    <label class="block text-xs font-bold text-gray-700 mb-2">変更候補 <span class="font-normal text-gray-500">（除外条件をクリアしている人）</span></label>
+                    <select id="editModalCandidate" class="w-full border-gray-300 rounded shadow-sm focus:border-navy-500 border p-2 bg-white text-sm" onchange="onCandidateSelected()">
+                        <!-- options -->
+                    </select>
+                    <button onclick="applyDirectChange()" class="mt-3 px-4 py-2 text-sm bg-navy-600 text-white rounded hover:bg-navy-700 transition w-full shadow flex justify-center items-center">
+                        <i class="fa-solid fa-check mr-2"></i> この人に変更する
+                    </button>
+                </div>
+
+                <div id="exchangeArea" class="hidden mt-2">
+                    <div class="flex items-center gap-2 mb-2">
+                        <i class="fa-solid fa-right-left text-navy-600"></i>
+                        <p class="text-sm font-bold text-gray-700">日程交換可能な日</p>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-2">※クリックすると現在の人と担当日を入れ替えます</p>
+                    <ul id="exchangeableDatesList" class="space-y-2 max-h-40 overflow-y-auto hide-scrollbar">
+                        <!-- list -->
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Confirm Reset -->
+    <div id="resetConfirmModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[70] flex justify-center items-center">
+        <div class="bg-white rounded-xl shadow-xl w-80 overflow-hidden transform transition-all">
+            <div class="bg-red-600 px-4 py-3 flex justify-between items-center text-white">
+                <h3 class="font-bold text-sm"><i class="fa-solid fa-triangle-exclamation mr-2"></i>確認</h3>
+                <button onclick="closeResetConfirmModal()" class="text-red-200 hover:text-white transition focus:outline-none">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <div class="p-5">
+                <p class="text-sm text-gray-700 mb-4">全員の除外日（当直、消化器当番、外勤・休暇、新患）をすべてクリアします。<br><br>※対象者リストや上限回数はそのまま残ります。<br>※この操作は元に戻せません。よろしいですか？</p>
+                <div class="flex justify-end gap-3">
+                    <button onclick="closeResetConfirmModal()" class="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded hover:bg-gray-50 transition">キャンセル</button>
+                    <button onclick="executeResetExclusions()" class="px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-700 transition font-bold shadow">リセットする</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase and Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
         let members = [
             { id: 1, name: "瓜田宗", attribute: "教員・スタッフ", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "18", shoukaki: "", fuzai: "", shinkan: "6,13,20,27" },
             { id: 2, name: "瓜田愛", attribute: "教員・スタッフ", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "", fuzai: "", shinkan: "5,12,19,26" },
@@ -245,18 +339,182 @@
             { id: 8, name: "八子", attribute: "専攻医1年目", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "18,26", fuzai: "28", shinkan: "4" },
             { id: 9, name: "山田", attribute: "専攻医1年目", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "3,20", fuzai: "14", shinkan: "20" }
         ];
+        
+        let currentScheduleData = null;
+        let isRemoteUpdating = false;
+        let currentUser = null;
+        let currentUnsubscribe = null;
+        
+        // --- Firebase Initialization ---
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "AIzaSyCogiKhD0yR89ARKaaHvszijRiorJozRLM",
+            authDomain: "nittyu-toban.firebaseapp.com",
+            projectId: "nittyu-toban",
+            storageBucket: "nittyu-toban.firebasestorage.app",
+            messagingSenderId: "87271311968",
+            appId: "1:87271311968:web:b80ebab1314bbb5bd89105"
+        };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'nittyu-toban-app';
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Authentication failed:", error);
+                showAlert("データベースへの接続に失敗しました。");
+            }
+        };
+
+        function showSyncStatus() {
+            const el = document.getElementById('syncStatus');
+            el.classList.remove('opacity-0');
+            setTimeout(() => el.classList.add('opacity-0'), 2000);
+        }
+
+        function setupFirestoreListener(monthVal) {
+            if (currentUnsubscribe) {
+                currentUnsubscribe();
+            }
+            if (!monthVal) return;
+            
+            const stateRef = doc(db, 'artifacts', appId, 'public', 'data', 'schedules', monthVal);
+            
+            currentUnsubscribe = onSnapshot(stateRef, async (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    isRemoteUpdating = true;
+
+                    const holidaysInput = document.getElementById('holidays');
+                    if (holidaysInput.value !== data.holidays) holidaysInput.value = data.holidays || '';
+
+                    if (JSON.stringify(members) !== JSON.stringify(data.members)) {
+                        members = data.members || [];
+                        renderMembers();
+                    }
+
+                    if (JSON.stringify(currentScheduleData) !== JSON.stringify(data.schedule)) {
+                        currentScheduleData = data.schedule || null;
+                        renderSchedule(currentScheduleData);
+                    }
+                    isRemoteUpdating = false;
+                } else {
+                    isRemoteUpdating = true;
+                    currentScheduleData = null;
+                    renderSchedule(null);
+                    
+                    // 月が変わって新しいデータを作成する際、基本設定は引き継ぎ、除外日だけをリセットする
+                    members = members.map(m => ({
+                        ...m,
+                        douchoku: "",
+                        shoukaki: "",
+                        fuzai: "",
+                        shinkan: ""
+                    }));
+                    renderMembers();
+
+                    await fetchAndSetHolidays(true);
+                    isRemoteUpdating = false;
+                    saveToFirestore();
+                }
+            }, (error) => {
+                console.error("Firestore listener error:", error);
+            });
+        }
+
+        async function saveToFirestore() {
+            if (!currentUser || isRemoteUpdating) return;
+            const monthVal = document.getElementById('targetMonth').value;
+            if (!monthVal) return;
+            
+            const stateRef = doc(db, 'artifacts', appId, 'public', 'data', 'schedules', monthVal);
+            const state = {
+                holidays: document.getElementById('holidays').value,
+                members: members,
+                schedule: currentScheduleData
+            };
+            try {
+                await setDoc(stateRef, state);
+                showSyncStatus();
+            } catch (e) {
+                console.error("Error saving to Firestore", e);
+            }
+        }
 
         document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('targetMonth').value = '2026-08';
-            document.getElementById('holidays').value = '11';
+            const now = new Date();
+            const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            const yyyy = nextMonth.getFullYear();
+            const mm = String(nextMonth.getMonth() + 1).padStart(2, '0');
+            document.getElementById('targetMonth').value = `${yyyy}-${mm}`;
             
             document.getElementById('targetMonth').addEventListener('change', () => {
-                // Changing the month might invalidate existing inputs, but we'll leave them as is
-                // and let the user correct them using the calendar in the new month context.
+                if (isRemoteUpdating) return;
+                const newMonth = document.getElementById('targetMonth').value;
+                if (newMonth && currentUser) {
+                    setupFirestoreListener(newMonth);
+                }
+            });
+
+            document.getElementById('holidays').addEventListener('change', () => {
+                if (isRemoteUpdating) return;
+                resetSchedule();
+                saveToFirestore();
             });
             
             renderMembers();
+            initAuth();
         });
+
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            if (user) {
+                const monthVal = document.getElementById('targetMonth').value;
+                setupFirestoreListener(monthVal);
+            }
+        });
+
+        async function fetchAndSetHolidays(resetCurrent = false) {
+            const monthVal = document.getElementById('targetMonth').value;
+            if(!monthVal) return;
+            const [year, month] = monthVal.split('-');
+            
+            try {
+                const res = await fetch('https://holidays-jp.github.io/api/v1/date.json');
+                const data = await res.json();
+                
+                const prefix = `${year}-${month.padStart(2, '0')}-`;
+                const holidaysInMonth = [];
+                for(const dateStr in data) {
+                    if(dateStr.startsWith(prefix)) {
+                        holidaysInMonth.push(parseInt(dateStr.split('-')[2], 10));
+                    }
+                }
+                
+                const currentInput = document.getElementById('holidays');
+                
+                let newHolidays;
+                if (resetCurrent) {
+                    newHolidays = new Set(holidaysInMonth);
+                } else {
+                    const currentHolidays = parseDates(currentInput.value);
+                    newHolidays = new Set([...currentHolidays, ...holidaysInMonth]);
+                }
+                
+                const sortedHolidays = Array.from(newHolidays).sort((a,b)=>a-b);
+                currentInput.value = sortedHolidays.join(',');
+                
+            } catch(e) {
+                console.error("祝日取得エラー", e);
+            }
+        }
 
         function generateId() {
             return members.length > 0 ? Math.max(...members.map(m => m.id)) + 1 : 1;
@@ -325,23 +583,22 @@
             });
         }
 
-        function addMember() {
+        window.addMember = function() {
             members.push({
-                id: generateId(),
-                name: `新規担当者`,
-                attribute: "専攻医1年目",
-                maxFirstShifts: 3, maxSecondShifts: 3,
-                douchoku: "", shoukaki: "", fuzai: "", shinkan: ""
+                id: generateId(), name: `新規担当者`, attribute: "専攻医1年目",
+                maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "", fuzai: "", shinkan: ""
             });
             renderMembers();
+            saveToFirestore();
         }
 
-        function removeMember(id) {
+        window.removeMember = function(id) {
             members = members.filter(m => m.id !== id);
             renderMembers();
+            saveToFirestore();
         }
 
-        function updateMember(id, field, value) {
+        window.updateMember = function(id, field, value) {
             const member = members.find(m => m.id === id);
             if (member) {
                 if(field === 'maxFirstShifts' || field === 'maxSecondShifts') {
@@ -349,7 +606,34 @@
                 } else {
                     member[field] = value;
                 }
+                resetSchedule(); 
+                saveToFirestore();
             }
+        }
+
+        // --- 除外日リセット関連 ---
+        window.openResetConfirmModal = function() {
+            document.getElementById('resetConfirmModal').classList.remove('hidden');
+        }
+
+        window.closeResetConfirmModal = function() {
+            document.getElementById('resetConfirmModal').classList.add('hidden');
+        }
+
+        window.executeResetExclusions = function() {
+            // 全員の除外日を空にする
+            members = members.map(m => ({
+                ...m,
+                douchoku: "",
+                shoukaki: "",
+                fuzai: "",
+                shinkan: ""
+            }));
+            renderMembers();
+            resetSchedule();
+            saveToFirestore();
+            closeResetConfirmModal();
+            showAlert('現在の月の除外日をすべてリセットしました。');
         }
 
         function showAlert(msg) {
@@ -359,41 +643,42 @@
             setTimeout(() => alertBox.classList.add('hidden'), 5000);
         }
 
-        let currentPickerContext = { memberId: null, field: null };
+        let currentPickerContext = { memberId: null, field: null, isHoliday: false };
         let selectedDates = new Set();
 
-        function openDatePicker(memberId, field, title) {
+        window.openDatePicker = function(memberId, field, title) {
             const monthVal = document.getElementById('targetMonth').value;
-            if (!monthVal) {
-                showAlert("先に対象年月を設定してください。");
-                return;
-            }
-
-            currentPickerContext = { memberId, field };
+            if (!monthVal) { showAlert("先に対象年月を設定してください。"); return; }
+            currentPickerContext = { memberId, field, isHoliday: false };
             document.getElementById('datePickerTitle').innerText = title;
-            
             const [year, month] = monthVal.split('-').map(Number);
             document.getElementById('datePickerMonthYear').innerText = `${year}年 ${month}月`;
-
-            // Get existing dates from the input field to pre-select them
             const currentInputValue = document.getElementById(`input_${memberId}_${field}`).value;
             selectedDates = new Set(parseDates(currentInputValue));
-
             renderCalendar(year, month);
             document.getElementById('datePickerModal').classList.remove('hidden');
         }
 
-        function closeDatePicker() {
+        window.openHolidayPicker = function() {
+            const monthVal = document.getElementById('targetMonth').value;
+            if (!monthVal) { showAlert("先に対象年月を設定してください。"); return; }
+            currentPickerContext = { isHoliday: true };
+            document.getElementById('datePickerTitle').innerText = "休診日・祝日の選択";
+            const [year, month] = monthVal.split('-').map(Number);
+            document.getElementById('datePickerMonthYear').innerText = `${year}年 ${month}月`;
+            const currentInputValue = document.getElementById('holidays').value;
+            selectedDates = new Set(parseDates(currentInputValue));
+            renderCalendar(year, month);
+            document.getElementById('datePickerModal').classList.remove('hidden');
+        }
+
+        window.closeDatePicker = function() {
             document.getElementById('datePickerModal').classList.add('hidden');
         }
 
-        function toggleDate(date) {
-            if (selectedDates.has(date)) {
-                selectedDates.delete(date);
-            } else {
-                selectedDates.add(date);
-            }
-            // Re-render only the specific day element to be faster, but re-rendering all is fine here
+        window.toggleDate = function(date) {
+            if (selectedDates.has(date)) selectedDates.delete(date);
+            else selectedDates.add(date);
             const yearMonth = document.getElementById('targetMonth').value.split('-');
             renderCalendar(Number(yearMonth[0]), Number(yearMonth[1]));
         }
@@ -401,72 +686,61 @@
         function renderCalendar(year, month) {
             const container = document.getElementById('calendarDays');
             container.innerHTML = '';
-            
             const firstDay = new Date(year, month - 1, 1).getDay();
             const daysInMonth = new Date(year, month, 0).getDate();
+            const globalHolidays = new Set(parseDates(document.getElementById('holidays').value));
             
-            // Empty slots for days before the 1st
             for (let i = 0; i < firstDay; i++) {
-                const emptyDiv = document.createElement('div');
-                container.appendChild(emptyDiv);
+                container.appendChild(document.createElement('div'));
             }
             
-            // Days of the month
             for (let i = 1; i <= daysInMonth; i++) {
                 const dayDiv = document.createElement('div');
-                dayDiv.className = 'calendar-day';
                 dayDiv.innerText = i;
-                
-                if (selectedDates.has(i)) {
-                    dayDiv.classList.add('selected');
-                }
+                const dayOfWeek = new Date(year, month - 1, i).getDay();
+                let colorClass = 'text-gray-800';
+                if (dayOfWeek === 0 || globalHolidays.has(i)) colorClass = 'text-red-500 font-bold bg-red-50/50';
+                else if (dayOfWeek === 6) colorClass = 'text-blue-500 font-bold bg-blue-50/50';
+
+                if (selectedDates.has(i)) dayDiv.className = 'calendar-day selected';
+                else dayDiv.className = `calendar-day ${colorClass}`;
                 
                 dayDiv.onclick = () => toggleDate(i);
                 container.appendChild(dayDiv);
             }
         }
 
-        function clearDatePicker() {
+        window.clearDatePicker = function() {
             selectedDates.clear();
             const yearMonth = document.getElementById('targetMonth').value.split('-');
             renderCalendar(Number(yearMonth[0]), Number(yearMonth[1]));
         }
 
-        function saveDatePicker() {
+        window.saveDatePicker = function() {
             const sortedDates = Array.from(selectedDates).sort((a, b) => a - b);
             const dateString = sortedDates.join(',');
             
-            // Update input UI
-            const inputEl = document.getElementById(`input_${currentPickerContext.memberId}_${currentPickerContext.field}`);
-            if(inputEl) {
-                inputEl.value = dateString;
+            if (currentPickerContext.isHoliday) {
+                document.getElementById('holidays').value = dateString;
+                resetSchedule(); 
+                saveToFirestore();
+            } else {
+                const inputEl = document.getElementById(`input_${currentPickerContext.memberId}_${currentPickerContext.field}`);
+                if(inputEl) inputEl.value = dateString;
+                window.updateMember(currentPickerContext.memberId, currentPickerContext.field, dateString);
             }
-            
-            // Update state
-            updateMember(currentPickerContext.memberId, currentPickerContext.field, dateString);
-            
-            closeDatePicker();
+            window.closeDatePicker();
         }
 
-
-        // --- CSV Export / Import Functions ---
-        function exportCSV() {
+        window.exportCSV = function() {
             const header = ["名前", "属性", "1st上限", "2nd上限", "当直", "消化器当番", "外勤・休暇", "新患"];
             const rows = members.map(m => [
-                `"${m.name || ''}"`, 
-                `"${m.attribute || '専攻医1年目'}"`,
-                m.maxFirstShifts, 
-                m.maxSecondShifts,
-                `"${m.douchoku || ''}"`, 
-                `"${m.shoukaki || ''}"`, 
-                `"${m.fuzai || ''}"`, 
-                `"${m.shinkan || ''}"`
+                `"${m.name || ''}"`, `"${m.attribute || '専攻医1年目'}"`, m.maxFirstShifts, m.maxSecondShifts,
+                `"${m.douchoku || ''}"`, `"${m.shoukaki || ''}"`, `"${m.fuzai || ''}"`, `"${m.shinkan || ''}"`
             ]);
-            
             const csvContent = header.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
             const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
             const blob = new Blob([bom, csvContent], { type: "text/csv;charset=utf-8;" });
-            
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.setAttribute("href", url);
@@ -476,19 +750,14 @@
             document.body.removeChild(link);
         }
 
-        function importCSV(event) {
+        window.importCSV = function(event) {
             const file = event.target.files[0];
             if (!file) return;
-
             const reader = new FileReader();
             reader.onload = function(e) {
                 const text = e.target.result;
                 const lines = text.split(/\r\n|\n/).filter(line => line.trim() !== '');
-                if(lines.length <= 1) {
-                    showAlert("データが見つからないか、無効なファイル形式です。");
-                    return;
-                }
-
+                if(lines.length <= 1) { showAlert("データが見つからないか、無効なファイル形式です。"); return; }
                 const parseCSVRow = (str) => {
                     let result = [], cur = "", inQuotes = false;
                     for (let i = 0; i < str.length; i++) {
@@ -499,29 +768,22 @@
                     result.push(cur.trim());
                     return result;
                 };
-
                 const newMembers = [];
                 for (let i = 1; i < lines.length; i++) {
                     const cols = parseCSVRow(lines[i]);
-                    // Header expects 8 columns now
                     if(cols.length >= 8) {
                         newMembers.push({
-                            id: i,
-                            name: cols[0],
-                            attribute: cols[1],
-                            maxFirstShifts: parseInt(cols[2]) || 0,
-                            maxSecondShifts: parseInt(cols[3]) || 0,
-                            douchoku: cols[4],
-                            shoukaki: cols[5],
-                            fuzai: cols[6],
-                            shinkan: cols[7]
+                            id: i, name: cols[0], attribute: cols[1],
+                            maxFirstShifts: parseInt(cols[2]) || 0, maxSecondShifts: parseInt(cols[3]) || 0,
+                            douchoku: cols[4], shoukaki: cols[5], fuzai: cols[6], shinkan: cols[7]
                         });
                     }
                 }
-                
                 if(newMembers.length > 0) {
                     members = newMembers;
                     renderMembers();
+                    resetSchedule();
+                    saveToFirestore();
                     showAlert("表データを読み込みました！");
                 }
                 document.getElementById('csvFileInput').value = "";
@@ -531,16 +793,13 @@
 
         function parseDates(dateStr) {
             if (!dateStr) return [];
-            return dateStr.split(',')
-                .map(d => parseInt(d.replace(/[^0-9]/g, '')))
-                .filter(d => !isNaN(d));
+            return dateStr.split(',').map(d => parseInt(d.replace(/[^0-9]/g, ''))).filter(d => !isNaN(d));
         }
 
         function getValidDays(year, month, holidays) {
             const daysInMonth = new Date(year, month, 0).getDate();
             const validDays = [];
             const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
-
             for (let i = 1; i <= daysInMonth; i++) {
                 const date = new Date(year, month - 1, i);
                 const dayOfWeek = date.getDay();
@@ -551,12 +810,54 @@
             return validDays;
         }
 
-        function startGeneration() {
+        // --- 条件判定・スケジュール編集用 ---
+        function getMemberExclusions(member) {
+            const douchoku = parseDates(member.douchoku);
+            const shoukaki = parseDates(member.shoukaki);
+            const fuzai = parseDates(member.fuzai);
+            const shinkan = parseDates(member.shinkan);
+            let absoluteExclusions = new Set([...fuzai, ...douchoku]);
+            douchoku.forEach(d => absoluteExclusions.add(d + 1));
+            shoukaki.forEach(d => absoluteExclusions.add(d + 1));
+            return { absoluteExclusions, shinkanExclusions: new Set(shinkan) };
+        }
+
+        function canAssign(member, date, role) {
+            const excl = getMemberExclusions(member);
+            if (excl.absoluteExclusions.has(date)) return false;
+            // 1stの場合、新患日を絶対回避
+            if (role === 'first' && excl.shinkanExclusions.has(date)) return false;
+            return true; 
+        }
+
+        function updateWarnings(schedule) {
+            schedule.forEach(day => {
+                if (day.second && day.second !== '割当不可') {
+                    const m = members.find(x => x.name === day.second);
+                    if (m) {
+                        const excl = getMemberExclusions(m);
+                        day.isWarning = excl.shinkanExclusions.has(day.date);
+                    } else {
+                        day.isWarning = false;
+                    }
+                } else {
+                    day.isWarning = false;
+                }
+            });
+        }
+
+        window.startGeneration = function() {
             document.getElementById('loadingIndicator').classList.remove('hidden');
             setTimeout(() => {
                 generateSchedule();
                 document.getElementById('loadingIndicator').classList.add('hidden');
             }, 50);
+        }
+        
+        window.resetSchedule = function() {
+            currentScheduleData = null;
+            renderSchedule(null);
+            saveToFirestore();
         }
 
         function generateSchedule() {
@@ -570,26 +871,13 @@
             if(members.length === 0) { showAlert("対象者がいません。"); return; }
 
             const parsedMembers = members.map(m => {
-                const douchoku = parseDates(m.douchoku);
-                const shoukaki = parseDates(m.shoukaki);
-                const fuzai = parseDates(m.fuzai);
-                const shinkan = parseDates(m.shinkan);
-
-                let absoluteExclusions = new Set([...fuzai, ...douchoku]);
-                douchoku.forEach(d => absoluteExclusions.add(d + 1)); // 当直翌日除外
-                shoukaki.forEach(d => absoluteExclusions.add(d + 1)); // 消化器当番翌日除外
-
-                return {
-                    ...m,
-                    absoluteExclusions,
-                    shinkanExclusions: new Set(shinkan)
-                };
+                return { ...m, ...getMemberExclusions(m) };
             });
 
             const getAttrScore = (attr) => {
                 if (attr === "専攻医1年目") return 3;
                 if (attr === "専攻医2・3年目") return 2;
-                return 1; // 教員・スタッフ
+                return 1;
             };
 
             let bestSchedule = null;
@@ -602,45 +890,31 @@
                 parsedMembers.forEach(m => counts[m.id] = { first: 0, second: 0, total: 0 });
                 
                 let iterationScore = 0;
-                let prevAssignees = new Set(); // 前日の担当者を記憶（連日回避用）
+                let prevAssignees = new Set(); 
 
                 for (let day of validDays) {
                     const date = day.date;
                     
-                    // --- Assign 1st Call ---
-                    // まずは専攻医（1年目、2・3年目）のみを候補とする
                     let avail1st = parsedMembers.filter(m => 
-                        !m.absoluteExclusions.has(date) && 
-                        !m.shinkanExclusions.has(date) && 
-                        counts[m.id].first < m.maxFirstShifts &&
-                        m.attribute !== "教員・スタッフ"
+                        !m.absoluteExclusions.has(date) && !m.shinkanExclusions.has(date) && 
+                        counts[m.id].first < m.maxFirstShifts && m.attribute !== "教員・スタッフ"
                     );
 
-                    // もし専攻医が見つからなければ（割当不足時）、教員・スタッフを含める
                     if (avail1st.length === 0) {
                         avail1st = parsedMembers.filter(m => 
-                            !m.absoluteExclusions.has(date) && 
-                            !m.shinkanExclusions.has(date) && 
+                            !m.absoluteExclusions.has(date) && !m.shinkanExclusions.has(date) && 
                             counts[m.id].first < m.maxFirstShifts
                         );
                     }
 
-                    // ソート処理（バラつきと優先度）
                     avail1st.sort((a, b) => {
-                        // 1. 連日回避 (前日担当者を後回し)
                         const aPrev = prevAssignees.has(a.id) ? 1 : 0;
                         const bPrev = prevAssignees.has(b.id) ? 1 : 0;
                         if (aPrev !== bPrev) return aPrev - bPrev; 
-
-                        // 2. 属性優先度 (専攻医1年目 > 2・3年目 > 教員スタッフ)
                         const aScore = getAttrScore(a.attribute);
                         const bScore = getAttrScore(b.attribute);
-                        if (aScore !== bScore) return bScore - aScore; // スコアが高い方を前に
-
-                        // 3. 担当回数が少ない人を優先 (バラつき確保)
+                        if (aScore !== bScore) return bScore - aScore;
                         if (counts[a.id].first !== counts[b.id].first) return counts[a.id].first - counts[b.id].first;
-
-                        // 4. ランダム
                         return Math.random() - 0.5;
                     });
                     
@@ -648,32 +922,21 @@
                     if (firstCall) {
                         counts[firstCall.id].first++;
                         counts[firstCall.id].total++;
-                    } else {
-                        iterationScore -= 100000; 
-                    }
+                    } else iterationScore -= 100000; 
 
-                    // --- Assign 2nd Call ---
                     let avail2nd = parsedMembers.filter(m => 
-                        !m.absoluteExclusions.has(date) && 
-                        counts[m.id].second < m.maxSecondShifts &&
+                        !m.absoluteExclusions.has(date) && counts[m.id].second < m.maxSecondShifts &&
                         (!firstCall || m.id !== firstCall.id) 
                     );
 
                     avail2nd.sort((a, b) => {
-                        // 1. 連日回避
                         const aPrev = prevAssignees.has(a.id) ? 1 : 0;
                         const bPrev = prevAssignees.has(b.id) ? 1 : 0;
                         if (aPrev !== bPrev) return aPrev - bPrev;
-
-                        // 2. 新患担当日回避 (極力避ける)
                         const aHasShinkan = a.shinkanExclusions.has(date) ? 1 : 0;
                         const bHasShinkan = b.shinkanExclusions.has(date) ? 1 : 0;
                         if (aHasShinkan !== bHasShinkan) return aHasShinkan - bHasShinkan;
-
-                        // 3. 担当回数が少ない人を優先 (バラつき確保)
                         if (counts[a.id].second !== counts[b.id].second) return counts[a.id].second - counts[b.id].second;
-
-                        // 教員・スタッフは基本2ndだが、枠が空きやすいので回数ベースのソートで自然に埋まる
                         return Math.random() - 0.5;
                     });
 
@@ -687,29 +950,23 @@
                             iterationScore -= 5000; 
                             isWarning = true;
                         }
-                    } else {
-                        iterationScore -= 100000;
-                    }
+                    } else iterationScore -= 100000;
 
-                    // 評価ペナルティ：ソートで避けてもやむを得ず連日になってしまった場合
                     if (firstCall && prevAssignees.has(firstCall.id)) iterationScore -= 3000;
                     if (secondCall && prevAssignees.has(secondCall.id)) iterationScore -= 3000;
 
-                    // 次の日のために前日担当者を記憶
                     prevAssignees = new Set();
                     if(firstCall) prevAssignees.add(firstCall.id);
                     if(secondCall) prevAssignees.add(secondCall.id);
 
                     currentSchedule.push({
-                        date: date,
-                        dayName: day.dayName,
+                        date: date, dayName: day.dayName,
                         first: firstCall ? firstCall.name : '割当不可',
                         second: secondCall ? secondCall.name : '割当不可',
                         isWarning: isWarning
                     });
                 }
 
-                // Balance penalty optimization
                 let varianceTotal = Object.values(counts).reduce((sum, c) => sum + Math.pow(c.total, 2), 0);
                 iterationScore -= varianceTotal * 50; 
 
@@ -717,10 +974,11 @@
                     bestScore = iterationScore;
                     bestSchedule = currentSchedule;
                 }
-
                 if(iterationScore === 0) break;
             }
 
+            currentScheduleData = bestSchedule;
+            saveToFirestore();
             renderSchedule(bestSchedule);
         }
 
@@ -729,67 +987,199 @@
             tbody.innerHTML = '';
 
             if (!schedule || schedule.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="3" class="px-4 py-8 text-center text-red-500 font-medium">条件が厳しすぎます。設定を見直してください。</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="3" class="px-4 py-12 text-center text-gray-400"><i class="fa-solid fa-list-check text-4xl mb-3 opacity-50"></i><p>条件を設定し、「スケジュール自動生成」<br>をクリックしてください。</p></td></tr>`;
+                document.getElementById('summaryContainer').innerHTML = '';
                 return;
             }
 
             schedule.forEach(day => {
                 const tr = document.createElement('tr');
                 
+                let firstRaw = day.first;
+                let secondRaw = day.second;
+                
                 let firstContent, firstClass;
-                if (day.first === '割当不可') {
+                if (firstRaw === '割当不可') {
                     firstContent = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>割当不可`;
-                    firstClass = 'bg-red-100 text-red-700 font-bold border border-red-200';
+                    firstClass = 'bg-red-50 text-red-700 font-bold border border-red-200';
                 } else {
-                    firstContent = day.first;
+                    firstContent = firstRaw;
                     firstClass = 'text-navy-900 font-medium';
                 }
 
                 let secondContent, secondClass;
-                if (day.second === '割当不可') {
+                if (secondRaw === '割当不可') {
                     secondContent = `<i class="fa-solid fa-triangle-exclamation mr-1"></i>割当不可`;
-                    secondClass = 'bg-red-100 text-red-700 font-bold border border-red-200';
+                    secondClass = 'bg-red-50 text-red-700 font-bold border border-red-200';
                 } else {
                     const warningIcon = day.isWarning ? `<i class="fa-solid fa-triangle-exclamation text-orange-500 mr-1.5" title="新患担当日ですが、やむを得ず2ndに割り当てられました"></i>` : '';
-                    secondContent = `${warningIcon}${day.second}`;
+                    secondContent = `${warningIcon}${secondRaw}`;
                     secondClass = 'text-gray-700';
                 }
 
-                tr.className = `transition hover:bg-navy-50/50 border-b border-gray-100`;
+                tr.className = `transition hover:bg-navy-50 border-b border-gray-100`;
                 tr.innerHTML = `
-                    <td class="px-3 py-2 whitespace-nowrap text-gray-700 bg-gray-50/30">
+                    <td class="px-3 py-2 whitespace-nowrap text-gray-700 bg-gray-50/50">
                         <span class="font-bold text-base">${day.date}</span><span class="text-xs ml-1 text-gray-500">(${day.dayName})</span>
                     </td>
-                    <td class="px-3 py-2 whitespace-nowrap ${firstClass}">
-                        ${firstContent}
+                    <td class="px-2 py-1.5 whitespace-nowrap ${firstClass}">
+                        <div class="flex justify-between items-center cursor-pointer hover:bg-blue-100/60 px-2 py-1.5 rounded transition duration-150" onclick="openEditModal(${day.date}, 'first', '${firstRaw}')" title="クリックして担当を変更">
+                            <span>${firstContent}</span>
+                            <i class="fa-solid fa-pen-to-square text-gray-300 text-xs hover:text-navy-500"></i>
+                        </div>
                     </td>
-                    <td class="px-3 py-2 whitespace-nowrap ${secondClass}">
-                        ${secondContent}
+                    <td class="px-2 py-1.5 whitespace-nowrap ${secondClass}">
+                        <div class="flex justify-between items-center cursor-pointer hover:bg-blue-100/60 px-2 py-1.5 rounded transition duration-150" onclick="openEditModal(${day.date}, 'second', '${secondRaw}')" title="クリックして担当を変更">
+                            <span>${secondContent}</span>
+                            <i class="fa-solid fa-pen-to-square text-gray-300 text-xs hover:text-navy-500"></i>
+                        </div>
                     </td>
                 `;
                 tbody.appendChild(tr);
             });
-            
             renderSummary(schedule);
         }
+
+        // --- 担当変更・交換のモーダル関連処理 ---
+        let editContext = { date: null, role: null, currentName: null };
+
+        window.openEditModal = function(date, role, currentName) {
+            if(!currentScheduleData) return;
+            
+            editContext = { date, role, currentName };
+            
+            const roleText = role === 'first' ? '1st Call' : '2nd Call';
+            document.getElementById('editModalTarget').innerText = `${date}日 (${roleText})`;
+            document.getElementById('editModalCurrentName').innerText = currentName;
+            
+            const candidateSelect = document.getElementById('editModalCandidate');
+            candidateSelect.innerHTML = '<option value="">-- 選択してください --</option>';
+            
+            // 候補者の抽出
+            members.forEach(m => {
+                if (m.name !== currentName) {
+                    // 対象日の除外条件をチェック
+                    if (canAssign(m, date, role)) {
+                        // 同じ日の別のRoleに既にアサインされていないかチェック
+                        const dayData = currentScheduleData.find(d => d.date === date);
+                        const otherRole = role === 'first' ? 'second' : 'first';
+                        if (dayData && dayData[otherRole] === m.name) {
+                            return; // 同日に両方は担当不可とする
+                        }
+                        const opt = document.createElement('option');
+                        opt.value = m.name;
+                        opt.innerText = m.name;
+                        candidateSelect.appendChild(opt);
+                    }
+                }
+            });
+            
+            document.getElementById('exchangeArea').classList.add('hidden');
+            document.getElementById('editScheduleModal').classList.remove('hidden');
+        }
+
+        window.closeEditModal = function() {
+            document.getElementById('editScheduleModal').classList.add('hidden');
+        }
+
+        window.onCandidateSelected = function() {
+            const candidateName = document.getElementById('editModalCandidate').value;
+            const exchangeArea = document.getElementById('exchangeArea');
+            const listEl = document.getElementById('exchangeableDatesList');
+            listEl.innerHTML = '';
+            
+            if (!candidateName || editContext.currentName === '割当不可' || editContext.currentName === '不可') {
+                exchangeArea.classList.add('hidden');
+                return;
+            }
+            
+            const A = members.find(m => m.name === editContext.currentName);
+            const B = members.find(m => m.name === candidateName);
+            if (!A || !B) return;
+            
+            // 交換可能な日を探す
+            let foundExchange = false;
+            currentScheduleData.forEach(day => {
+                if (day.date === editContext.date) return;
+                
+                const checkAndAdd = (roleCheck, roleLabel) => {
+                    if (day[roleCheck] === B.name) {
+                        // Aさんがこの日のこのRoleを担当できるか？
+                        if (canAssign(A, day.date, roleCheck)) {
+                            // 同日にAさんが既に別Roleで入っていないかチェック
+                            const aOtherRole = roleCheck === 'first' ? 'second' : 'first';
+                            if (day[aOtherRole] !== A.name) {
+                                foundExchange = true;
+                                const li = document.createElement('li');
+                                li.className = "p-2.5 bg-white border border-gray-200 rounded text-sm flex justify-between items-center cursor-pointer hover:bg-navy-50 hover:border-navy-300 transition shadow-sm";
+                                li.innerHTML = `
+                                    <span class="font-medium text-gray-700"><span class="font-bold text-navy-800">${day.date}日</span> (${day.dayName}) の ${roleLabel}</span>
+                                    <button class="bg-blue-100 text-blue-700 px-2.5 py-1 rounded text-xs font-bold hover:bg-blue-200 transition"><i class="fa-solid fa-rotate mr-1"></i>交換</button>
+                                `;
+                                li.onclick = () => applyExchange(day.date, roleCheck, B.name);
+                                listEl.appendChild(li);
+                            }
+                        }
+                    }
+                };
+                
+                checkAndAdd('first', '1st Call');
+                checkAndAdd('second', '2nd Call');
+            });
+            
+            if (foundExchange) {
+                exchangeArea.classList.remove('hidden');
+            } else {
+                listEl.innerHTML = '<li class="text-xs text-gray-500 py-2">お互いの除外条件を満たし交換可能な日付はありません。</li>';
+                exchangeArea.classList.remove('hidden');
+            }
+        }
+
+        window.applyDirectChange = function() {
+            const candidateName = document.getElementById('editModalCandidate').value;
+            if (!candidateName) {
+                showAlert('変更候補を選択してください。');
+                return;
+            }
+            
+            const dayData = currentScheduleData.find(d => d.date === editContext.date);
+            if (dayData) {
+                dayData[editContext.role] = candidateName;
+                updateWarnings(currentScheduleData);
+                saveToFirestore();
+                renderSchedule(currentScheduleData);
+                closeEditModal();
+                showAlert(`${editContext.date}日の担当を変更しました。`);
+            }
+        }
+
+        window.applyExchange = function(exchangeDate, exchangeRole, candidateName) {
+            const day1 = currentScheduleData.find(d => d.date === editContext.date);
+            const day2 = currentScheduleData.find(d => d.date === exchangeDate);
+            
+            if (day1 && day2) {
+                day1[editContext.role] = candidateName;
+                day2[exchangeRole] = editContext.currentName;
+                
+                updateWarnings(currentScheduleData);
+                saveToFirestore();
+                renderSchedule(currentScheduleData);
+                closeEditModal();
+                showAlert(`${editContext.date}日と${exchangeDate}日の担当を入れ替えました。`);
+            }
+        }
+        // --- ここまで ---
 
         function renderSummary(schedule) {
             const shiftCounts = {};
             members.forEach(m => shiftCounts[m.name] = { first: 0, second: 0, total: 0 });
 
             schedule.forEach(day => {
-                if (day.first !== '割当不可' && shiftCounts[day.first]) {
-                    shiftCounts[day.first].first++;
-                    shiftCounts[day.first].total++;
-                }
-                if (day.second !== '割当不可' && shiftCounts[day.second]) {
-                    shiftCounts[day.second].second++;
-                    shiftCounts[day.second].total++;
-                }
+                if (day.first !== '割当不可' && shiftCounts[day.first]) { shiftCounts[day.first].first++; shiftCounts[day.first].total++; }
+                if (day.second !== '割当不可' && shiftCounts[day.second]) { shiftCounts[day.second].second++; shiftCounts[day.second].total++; }
             });
 
             const summaryContainer = document.getElementById('summaryContainer');
-            
             let summaryHTML = `
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div class="bg-navy-800 px-5 py-3 text-white">
@@ -807,7 +1197,6 @@
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
             `;
-
             members.forEach(member => {
                 const counts = shiftCounts[member.name];
                 if(counts) {
@@ -821,24 +1210,16 @@
                     `;
                 }
             });
-
-            summaryHTML += `
-                            </tbody>
-                        </table>
-                    </div>
-                </section>
-            `;
-
+            summaryHTML += `</tbody></table></div></section>`;
             summaryContainer.innerHTML = summaryHTML;
         }
 
-        function copyToClipboard() {
+        window.copyToClipboard = function() {
             const resultTable = document.getElementById('resultTable');
             if (resultTable.innerText.includes('条件を設定し')) {
                 showAlert('コピーするスケジュールがありません。');
                 return;
             }
-
             let text = '日付\t曜日\t1st Call\t2nd Call\n';
             const rows = resultTable.querySelectorAll('tr');
             rows.forEach(row => {
@@ -848,31 +1229,168 @@
                     const dateMatch = dateRaw.match(/(\d+)\((.)\)/);
                     let dateNum = dateMatch ? dateMatch[1] : dateRaw;
                     let dayName = dateMatch ? dateMatch[2] : '';
-                    
-                    let first = cols[1].innerText.trim();
-                    let second = cols[2].innerText.trim();
-                    
-                    // Strip icon texts and warning messages for clean Excel paste
-                    first = first.replace(/<[^>]*>?/gm, '').replace('割当不可', '不可').trim(); 
-                    second = second.replace(/<[^>]*>?/gm, '').replace('割当不可', '不可').trim(); 
-
+                    let first = cols[1].innerText.trim().replace(/<[^>]*>?/gm, '').replace('割当不可', '不可').trim(); 
+                    let second = cols[2].innerText.trim().replace(/<[^>]*>?/gm, '').replace('割当不可', '不可').trim(); 
                     text += `${dateNum}\t${dayName}\t${first}\t${second}\n`;
                 }
             });
-
             const textarea = document.createElement('textarea');
             textarea.value = text;
             document.body.appendChild(textarea);
             textarea.select();
             try {
                 document.execCommand('copy');
-                showAlert('クリップボードにコピーしました！ (Excel等に貼り付け可能です)');
-            } catch (err) {
-                showAlert('コピーに失敗しました。');
-            }
+                showAlert('リスト形式でクリップボードにコピーしました！');
+            } catch (err) { showAlert('コピーに失敗しました。'); }
             document.body.removeChild(textarea);
+        }
+
+        // --- ExcelJSを使用した本格的なExcel出力 ---
+        window.exportCalendarExcel = async function() {
+            if (!currentScheduleData || currentScheduleData.length === 0) {
+                showAlert('出力するスケジュールがありません。');
+                return;
+            }
+            const monthVal = document.getElementById('targetMonth').value;
+            const [year, month] = monthVal.split('-').map(Number);
+            const globalHolidays = new Set(parseDates(document.getElementById('holidays').value));
+
+            const schedMap = {};
+            currentScheduleData.forEach(d => {
+                schedMap[d.date] = d;
+            });
+
+            // ワークブックとワークシートの作成
+            const workbook = new ExcelJS.Workbook();
+            const worksheet = workbook.addWorksheet('当番表');
+
+            // 列の幅を設定
+            worksheet.columns = [
+                { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 },
+                { width: 14 }, { width: 14 }, { width: 14 }
+            ];
+
+            // 1行目: タイトル
+            worksheet.getRow(1).height = 25;
+            worksheet.getCell('A1').value = `${month}月`;
+            worksheet.getCell('A1').font = { size: 12, name: 'ＭＳ Ｐゴシック' };
+            worksheet.getCell('A1').alignment = { vertical: 'middle' };
+            
+            worksheet.mergeCells('C1:D1');
+            worksheet.getCell('C1').value = '消化器内科 日中当番';
+            worksheet.getCell('C1').font = { size: 14, name: 'ＭＳ Ｐゴシック' };
+            worksheet.getCell('C1').alignment = { horizontal: 'center', vertical: 'middle' };
+            worksheet.getCell('C1').border = {
+                top: {style:'medium'}, left: {style:'medium'},
+                bottom: {style:'medium'}, right: {style:'medium'}
+            };
+
+            // 2行目: 曜日ヘッダー
+            const days = ['日', '月', '火', '水', '木', '金', '土'];
+            const headerRow = worksheet.getRow(2);
+            headerRow.height = 22;
+            days.forEach((day, index) => {
+                const cell = headerRow.getCell(index + 1);
+                cell.value = day;
+                cell.font = { name: 'ＭＳ Ｐゴシック', size: 11 };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                
+                let bgColor = 'FFFFFFFF'; // 白
+                if (index === 0) bgColor = 'FFF7A8E6'; // ピンク
+                else if (index === 6) bgColor = 'FFA0C8EF'; // 水色
+                
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+                cell.border = { top: {style:'medium'}, left: {style:'medium'}, bottom: {style:'medium'}, right: {style:'medium'} };
+            });
+
+            // カレンダーロジック
+            let dateObj = new Date(year, month - 1, 1);
+            const firstDay = dateObj.getDay();
+            dateObj.setDate(1 - firstDay);
+            
+            let currentRowNum = 3; 
+
+            for (let w = 0; w < 6; w++) {
+                const rowDate = worksheet.getRow(currentRowNum);
+                const rowFirst = worksheet.getRow(currentRowNum + 1);
+                const rowSecond = worksheet.getRow(currentRowNum + 2);
+
+                rowDate.height = 18;
+                rowFirst.height = 28; // 1stは大きめ
+                rowSecond.height = 22;
+
+                for (let d = 0; d < 7; d++) {
+                    const colIdx = d + 1;
+                    const cellDate = rowDate.getCell(colIdx);
+                    const cellFirst = rowFirst.getCell(colIdx);
+                    const cellSecond = rowSecond.getCell(colIdx);
+
+                    const currentMonth = dateObj.getMonth() + 1;
+                    const dayNum = dateObj.getDate();
+                    const isTargetMonth = currentMonth === month;
+                    
+                    // 背景色の決定
+                    let bgColor = 'FFFFFFFF'; 
+                    if (!isTargetMonth) {
+                        bgColor = 'FFBFBFBF'; // 対象月外はグレー
+                    } else if (d === 0 || globalHolidays.has(dayNum)) {
+                        bgColor = 'FFF7A8E6'; // 日曜・休診日ピンク
+                    } else if (d === 6) {
+                        bgColor = 'FFA0C8EF'; // 土曜水色
+                    }
+
+                    const fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+                    cellDate.fill = fill;
+                    cellFirst.fill = fill;
+                    cellSecond.fill = fill;
+
+                    // 文字位置（中央揃え）
+                    const alignCenter = { horizontal: 'center', vertical: 'middle' };
+                    cellDate.alignment = alignCenter;
+                    cellFirst.alignment = alignCenter;
+                    cellSecond.alignment = alignCenter;
+
+                    // フォント設定 (1stは大きく太字、2ndは小さく少しグレー)
+                    cellDate.font = { name: 'ＭＳ Ｐゴシック', size: 10 };
+                    cellFirst.font = { name: 'ＭＳ Ｐゴシック', size: 14, bold: true, color: { argb: 'FF000000' } };
+                    cellSecond.font = { name: 'ＭＳ Ｐゴシック', size: 10, color: { argb: 'FF555555' } };
+
+                    // 値の代入
+                    if (isTargetMonth) {
+                        cellDate.value = dayNum;
+                        if (schedMap[dayNum]) {
+                            const firstCallName = schedMap[dayNum].first.replace('割当不可', '不可');
+                            const secondCallName = schedMap[dayNum].second.replace('割当不可', '不可').replace(/<[^>]*>?/gm, '');
+                            cellFirst.value = firstCallName;
+                            cellSecond.value = secondCallName;
+                        }
+                    }
+
+                    // 罫線の設定 (各日の外枠を太枠[medium]、内側を細線[thin])
+                    const thick = { style: 'medium' };
+                    const thin = { style: 'thin' };
+
+                    cellDate.border = { top: thick, left: thick, right: thick, bottom: thin };
+                    cellFirst.border = { left: thick, right: thick, bottom: thin };
+                    cellSecond.border = { left: thick, right: thick, bottom: thick };
+
+                    // 日付を1日進める
+                    dateObj.setDate(dateObj.getDate() + 1);
+                }
+                
+                currentRowNum += 3;
+
+                if (dateObj.getMonth() + 1 !== month && dateObj.getDate() > 1 && dateObj.getDay() === 0) {
+                    break;
+                }
+            }
+
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            saveAs(blob, `当番表_${year}年${month}月.xlsx`);
         }
     </script>
 </body>
 </html>
+
 
