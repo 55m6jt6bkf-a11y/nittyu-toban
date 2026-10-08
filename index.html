@@ -919,7 +919,8 @@
                 
                 let shinkanCols = new Set();
                 let kyukaCol = -1;
-                let sendaiKenshinCol = -1;
+                let wakabayashiCol = -1;
+                let toyosatoCol = -1;
 
                 // ヘッダー特定 (1〜10行目を探索)
                 for (let r = 1; r <= Math.min(10, worksheet.rowCount); r++) {
@@ -935,8 +936,13 @@
                         if (val.includes('休暇')) {
                             kyukaCol = colNumber;
                         }
-                        if (val.includes('仙台健診')) {
-                            sendaiKenshinCol = colNumber;
+                        // 若林EGD
+                        if (val.includes('若林')) {
+                            wakabayashiCol = colNumber;
+                        }
+                        // 豊里病院当直
+                        if (val.includes('豊里')) {
+                            toyosatoCol = colNumber;
                         }
                     });
                 }
@@ -1032,8 +1038,9 @@
                             });
                         }
                         
-                        // 仙台健診より右（仙台健診の列自体も含む）
-                        if (sendaiKenshinCol !== -1 && colNumber >= sendaiKenshinCol) {
+                        // 若林EGDより右側の欄（豊里病院当直まで）
+                        const isGaikinCol = wakabayashiCol !== -1 && colNumber >= wakabayashiCol && (toyosatoCol === -1 || colNumber <= toyosatoCol);
+                        if (isGaikinCol) {
                             rawNames.forEach(rn => {
                                 let pName = processName(rn);
                                 if (pName) {
