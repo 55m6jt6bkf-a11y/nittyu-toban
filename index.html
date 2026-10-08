@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
-    <!-- Excel出力用ライブラリ -->
+    <!-- Excel出力・入力用ライブラリ -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
@@ -116,6 +116,20 @@
                             <button onclick="openResetConfirmModal()" class="bg-red-600 hover:bg-red-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="現在の月の除外日をすべてクリアします">
                                 <i class="fa-solid fa-eraser mr-1"></i>除外日リセット
                             </button>
+                            <div class="w-px bg-navy-600 hidden sm:block"></div>
+                            
+                            <!-- 新機能：消化器当番Excel読込ボタン -->
+                            <button onclick="document.getElementById('excelFileInput').click()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="当番表(Excel)から消化器当番を読込">
+                                <i class="fa-solid fa-file-excel mr-1"></i>消化器当番読込
+                            </button>
+                            <input type="file" id="excelFileInput" accept=".xlsx" class="hidden" onchange="importShoukakiFromExcel(event)">
+
+                            <!-- 新機能：業務変更表Excel読込ボタン -->
+                            <button onclick="document.getElementById('gyomuFileInput').click()" class="bg-purple-600 hover:bg-purple-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="業務変更表(Excel)から読込">
+                                <i class="fa-solid fa-file-excel mr-1"></i>業務変更表読込
+                            </button>
+                            <input type="file" id="gyomuFileInput" accept=".xlsx" class="hidden" onchange="importGyomuFromExcel(event)">
+
                             <div class="w-px bg-navy-600 hidden sm:block"></div>
                             <button onclick="exportCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="条件データをCSVで出力">
                                 <i class="fa-solid fa-file-export mr-1"></i>条件出力
@@ -621,7 +635,6 @@
         }
 
         window.executeResetExclusions = function() {
-            // 全員の除外日を空にする
             members = members.map(m => ({
                 ...m,
                 douchoku: "",
@@ -789,6 +802,335 @@
                 document.getElementById('csvFileInput').value = "";
             };
             reader.readAsText(file); 
+        }
+
+        // 既存の消化器当番インポート機能
+        window.importShoukakiFromExcel = async function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const workbook = new ExcelJS.Workbook();
+                const arrayBuffer = await file.arrayBuffer();
+                await workbook.xlsx.load(arrayBuffer);
+                const worksheet = workbook.worksheets[0];
+                
+                let currentDatesByCol = {};
+                let shoukakiMap = {}; 
+
+                worksheet.eachRow((row, rowNumber) => {
+                    row.eachCell((cell, colNumber) => {
+                        let text = '';
+                        if (cell.value !== null && cell.value !== undefined) {
+                            if (typeof cell.value === 'object' && cell.value.richText) {
+                                text = cell.value.richText.map(rt => rt.text).join('\n');
+                            } else {
+                                text = String(cell.value);
+                            }
+                        }
+
+                        if (!text) return;
+
+                        const lines = text.split('\n').map(l => l.trim()).filter(l => l !== '');
+                        if (lines.length === 0) return;
+
+                        let cellDate = null;
+                        
+                        if (typeof cell.value === 'number') {
+                            if (cell.value >= 1 && cell.value <= 31) cellDate = cell.value;
+                        } else {
+                            const dateMatch = lines[0].match(/^([1-9]|[12][0-9]|3[01])(?!\d)/);
+                            if (dateMatch) {
+                                cellDate = parseInt(dateMatch[1], 10);
+                            }
+                        }
+
+                        if (cellDate !== null) {
+                            currentDatesByCol[colNumber] = cellDate;
+                        }
+
+                        for (const line of lines) {
+                            if (line.includes('[夜]')) {
+                                const nameMatch = line.match(/\[夜\]\s*([^\s　]+)/);
+                                if (nameMatch) {
+                                    let name = nameMatch[1];
+                                    name = name.replace('山田(陽)', '山田');
+                                    
+                                    const targetDate = cellDate !== null ? cellDate : currentDatesByCol[colNumber];
+                                    
+                                    if (targetDate) {
+                                        if (!shoukakiMap[name]) shoukakiMap[name] = new Set();
+                                        shoukakiMap[name].add(targetDate);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+
+                let updateCount = 0;
+                members.forEach(member => {
+                    const memberName = member.name.trim();
+                    let foundName = null;
+                    
+                    for (const key of Object.keys(shoukakiMap)) {
+                        if (key === memberName || memberName.includes(key) || key.includes(memberName)) {
+                            // 注意: ここで「山田」と「山田潤」が誤爆する可能性があるが、元実装を尊重。
+                            // 新規機能では厳密に実装。
+                            foundName = key;
+                            break;
+                        }
+                    }
+
+                    if (foundName) {
+                        const dates = Array.from(shoukakiMap[foundName]);
+                        const existingDates = parseDates(member.shoukaki);
+                        const allDates = Array.from(new Set([...existingDates, ...dates])).sort((a,b) => a - b);
+                        member.shoukaki = allDates.join(',');
+                        updateCount++;
+                    }
+                });
+
+                if (updateCount > 0) {
+                    renderMembers();
+                    resetSchedule();
+                    saveToFirestore();
+                    showAlert(`Excelカレンダーから ${updateCount} 名分の消化器当番を読み込みました！`);
+                } else {
+                    showAlert('読込可能な消化器当番データ（[夜] の記載）が見つかりませんでした。');
+                }
+
+            } catch (error) {
+                console.error("Excel読み込みエラー:", error);
+                showAlert('Excelファイルの解析に失敗しました。形式を確認してください。');
+            } finally {
+                document.getElementById('excelFileInput').value = ''; 
+            }
+        }
+
+        // 新機能: 業務変更表からの自動入力機能
+        window.importGyomuFromExcel = async function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const workbook = new ExcelJS.Workbook();
+                const arrayBuffer = await file.arrayBuffer();
+                await workbook.xlsx.load(arrayBuffer);
+                // 1枚目のシートを使用
+                const worksheet = workbook.worksheets[0];
+
+                let headerRowIndex = -1;
+                let dateColIndex = -1;
+                let shinkanCols = [];
+                let kyukaCol = -1;
+                let sendaiKenshinCol = -1;
+                let gaikinCols = [];
+
+                // ヘッダ行の特定と各列の役割の判別
+                worksheet.eachRow((row, rowNumber) => {
+                    if (headerRowIndex !== -1) return; // 既に見つけていたらスキップ
+                    
+                    let foundShinkan = false;
+                    let foundKyuka = false;
+                    
+                    row.eachCell((cell, colNumber) => {
+                        const text = String(cell.value || '').trim();
+                        if (text.includes('新患')) foundShinkan = true;
+                        if (text.includes('休暇')) foundKyuka = true;
+                        if (text.includes('日') || text === '日付' || text.toLowerCase() === 'date') dateColIndex = colNumber;
+                    });
+                    
+                    // 新患か休暇列が見つかればヘッダ行とみなす
+                    if (foundShinkan || foundKyuka) {
+                        headerRowIndex = rowNumber;
+                        
+                        row.eachCell((cell, colNumber) => {
+                            const text = String(cell.value || '').trim();
+                            if (text.includes('新患')) shinkanCols.push(colNumber);
+                            if (text.includes('休暇')) kyukaCol = colNumber;
+                            if (text.includes('仙台健診')) sendaiKenshinCol = colNumber;
+                        });
+
+                        // 仙台健診より右側の列を外勤列とする
+                        if (sendaiKenshinCol !== -1) {
+                            for (let c = sendaiKenshinCol + 1; c <= worksheet.columnCount; c++) {
+                                // 休暇列など他と被らないようにチェック
+                                if (c !== kyukaCol && !shinkanCols.includes(c)) {
+                                    gaikinCols.push(c);
+                                }
+                            }
+                        }
+                    }
+                });
+
+                if (headerRowIndex === -1) {
+                    showAlert('ヘッダ行（新患、休暇など）が見つかりませんでした。');
+                    return;
+                }
+
+                // 日付列が見つからなかった場合のフォールバック（左側の列で数値1-31が多いものを探す）
+                if (dateColIndex === -1) {
+                    let maxNumbersCount = 0;
+                    for (let c = 1; c <= Math.min(10, worksheet.columnCount); c++) {
+                        let numbersCount = 0;
+                        worksheet.getColumn(c).eachCell((cell, rowNumber) => {
+                            if (rowNumber > headerRowIndex) {
+                                const val = cell.value;
+                                if (typeof val === 'number' && val >= 1 && val <= 31) numbersCount++;
+                                else if (typeof val === 'string' && !isNaN(parseInt(val)) && parseInt(val) >= 1 && parseInt(val) <= 31) numbersCount++;
+                            }
+                        });
+                        if (numbersCount > maxNumbersCount) {
+                            maxNumbersCount = numbersCount;
+                            dateColIndex = c;
+                        }
+                    }
+                }
+
+                if (dateColIndex === -1) {
+                     showAlert('日付の列が見つかりませんでした。');
+                     return;
+                }
+
+                let shinkanMap = {};
+                let douchokuMap = {};
+                let gaikinMap = {};
+
+                const addRecord = (map, name, date) => {
+                    if (!name) return;
+                    let normalized = name.replace(/[\s　]/g, ''); // 空白除去
+                    // 同義語処理：山田陽、山田(陽)は山田とする
+                    normalized = normalized.replace(/山田[\(（]?陽[\)）]?/g, '山田');
+                    
+                    if (!map[normalized]) map[normalized] = new Set();
+                    map[normalized].add(date);
+                };
+
+                const getCellTextStr = (cell) => {
+                    if (cell.value === null || cell.value === undefined) return '';
+                    if (typeof cell.value === 'object' && cell.value.richText) {
+                        return cell.value.richText.map(rt => rt.text).join('\n');
+                    }
+                    return String(cell.value);
+                };
+
+                const processCell = (text, date, isKyukaCol, isGaikinCol) => {
+                    if (!text) return;
+                    // セル内に複数人いる可能性があるため、改行・カンマ・スラッシュ・読点等で分割
+                    const entries = text.split(/[\n・、,/]/);
+                    entries.forEach(entryRaw => {
+                        let entry = entryRaw.trim();
+                        if (!entry) return;
+
+                        // 名前の隣に「旧」と書かれたものは無視する
+                        if (entry.includes('旧')) return;
+
+                        // 「新」と書かれたものを採用するため、「新」の文字を除去する
+                        entry = entry.replace(/[\(（\[【]?新[\)）\]】]?/g, '');
+
+                        let isDouchoku = false;
+                        if (isKyukaCol) {
+                            // 休暇列の場合、（当直）が含まれていれば当直
+                            if (entry.includes('当直')) {
+                                isDouchoku = true;
+                                entry = entry.replace(/[\(（]?当直[\)）]?/g, '');
+                            }
+                        }
+                        
+                        // 残りの括弧などの記号を除去
+                        entry = entry.replace(/[\(（\)\)]/g, '').trim();
+                        
+                        if (entry) {
+                            if (isKyukaCol) {
+                                if (isDouchoku) addRecord(douchokuMap, entry, date);
+                                else addRecord(gaikinMap, entry, date); // その他の休暇者は外勤・休暇
+                            } else if (isGaikinCol) {
+                                addRecord(gaikinMap, entry, date); // 仙台健診より右側は外勤・休暇
+                            } else {
+                                addRecord(shinkanMap, entry, date); // 新患列
+                            }
+                        }
+                    });
+                };
+
+                // データの抽出
+                worksheet.eachRow((row, rowNumber) => {
+                    if (rowNumber <= headerRowIndex) return;
+
+                    const dateCell = row.getCell(dateColIndex);
+                    let dateVal = null;
+                    if (typeof dateCell.value === 'number') {
+                        dateVal = dateCell.value;
+                    } else if (typeof dateCell.value === 'string') {
+                        const m = dateCell.value.match(/^(\d+)/);
+                        if (m) dateVal = parseInt(m[1], 10);
+                    } else if (dateCell.value && dateCell.value instanceof Date) {
+                        dateVal = dateCell.value.getDate();
+                    }
+
+                    if (dateVal !== null && dateVal >= 1 && dateVal <= 31) {
+                        shinkanCols.forEach(col => processCell(getCellTextStr(row.getCell(col)), dateVal, false, false));
+                        if (kyukaCol !== -1) processCell(getCellTextStr(row.getCell(kyukaCol)), dateVal, true, false);
+                        gaikinCols.forEach(col => processCell(getCellTextStr(row.getCell(col)), dateVal, false, true));
+                    }
+                });
+
+                let updateCount = 0;
+                
+                // 抽出した名前とメンバー名の厳密なマッチングロジック
+                const getMatchedMemberForGyomu = (extractedName, membersList) => {
+                    let match = membersList.find(m => m.name === extractedName);
+                    if (match) return match; // 完全一致
+                    
+                    // 山田 / 山田潤 の判別ルール
+                    if (extractedName.includes('山田')) {
+                        if (extractedName.includes('山田潤')) {
+                            return membersList.find(m => m.name === '山田潤');
+                        }
+                        if (extractedName === '山田' || extractedName.includes('山田')) {
+                            // 既に「山田潤」でないことはわかっているため、「山田」を探す
+                            return membersList.find(m => m.name === '山田');
+                        }
+                    }
+
+                    // 部分一致 (抽出名がメンバー名を含む、またはその逆)
+                    match = membersList.find(m => extractedName.includes(m.name) || m.name.includes(extractedName));
+                    return match;
+                };
+
+                const mergeMap = (map, fieldName) => {
+                    for (const [extractedName, datesSet] of Object.entries(map)) {
+                        const member = getMatchedMemberForGyomu(extractedName, members);
+                        if (member) {
+                            const newDates = Array.from(datesSet);
+                            const existingDates = parseDates(member[fieldName]);
+                            // 重複排除してソート
+                            const allDates = Array.from(new Set([...existingDates, ...newDates])).sort((a,b) => a-b);
+                            member[fieldName] = allDates.join(',');
+                            updateCount++;
+                        }
+                    }
+                };
+
+                mergeMap(shinkanMap, 'shinkan');
+                mergeMap(douchokuMap, 'douchoku');
+                mergeMap(gaikinMap, 'fuzai'); // 外勤・休暇はfuzaiフィールドに格納
+
+                if (updateCount > 0) {
+                    renderMembers();
+                    resetSchedule();
+                    saveToFirestore();
+                    showAlert(`業務変更表からデータを読み込み、自動入力しました！`);
+                } else {
+                    showAlert('読込可能なデータが見つかりませんでした。');
+                }
+            } catch (error) {
+                console.error("業務変更表読込エラー:", error);
+                showAlert('Excelファイルの解析に失敗しました。形式を確認してください。');
+            } finally {
+                document.getElementById('gyomuFileInput').value = '';
+            }
         }
 
         function parseDates(dateStr) {
@@ -1168,8 +1510,7 @@
                 showAlert(`${editContext.date}日と${exchangeDate}日の担当を入れ替えました。`);
             }
         }
-        // --- ここまで ---
-
+        
         function renderSummary(schedule) {
             const shiftCounts = {};
             members.forEach(m => shiftCounts[m.name] = { first: 0, second: 0, total: 0 });
@@ -1200,7 +1541,7 @@
             members.forEach(member => {
                 const counts = shiftCounts[member.name];
                 if(counts) {
-                     summaryHTML += `
+                    summaryHTML += `
                         <tr class="hover:bg-gray-50 transition-colors">
                             <td class="px-4 py-2 text-gray-800 font-medium">${member.name}</td>
                             <td class="px-3 py-2 text-center text-gray-600">${counts.first}</td>
@@ -1245,7 +1586,6 @@
             document.body.removeChild(textarea);
         }
 
-        // --- ExcelJSを使用した本格的なExcel出力 ---
         window.exportCalendarExcel = async function() {
             if (!currentScheduleData || currentScheduleData.length === 0) {
                 showAlert('出力するスケジュールがありません。');
@@ -1260,17 +1600,14 @@
                 schedMap[d.date] = d;
             });
 
-            // ワークブックとワークシートの作成
             const workbook = new ExcelJS.Workbook();
             const worksheet = workbook.addWorksheet('当番表');
 
-            // 列の幅を設定
             worksheet.columns = [
                 { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 },
                 { width: 14 }, { width: 14 }, { width: 14 }
             ];
 
-            // 1行目: タイトル
             worksheet.getRow(1).height = 25;
             worksheet.getCell('A1').value = `${month}月`;
             worksheet.getCell('A1').font = { size: 12, name: 'ＭＳ Ｐゴシック' };
@@ -1285,7 +1622,6 @@
                 bottom: {style:'medium'}, right: {style:'medium'}
             };
 
-            // 2行目: 曜日ヘッダー
             const days = ['日', '月', '火', '水', '木', '金', '土'];
             const headerRow = worksheet.getRow(2);
             headerRow.height = 22;
@@ -1303,7 +1639,6 @@
                 cell.border = { top: {style:'medium'}, left: {style:'medium'}, bottom: {style:'medium'}, right: {style:'medium'} };
             });
 
-            // カレンダーロジック
             let dateObj = new Date(year, month - 1, 1);
             const firstDay = dateObj.getDay();
             dateObj.setDate(1 - firstDay);
@@ -1316,7 +1651,7 @@
                 const rowSecond = worksheet.getRow(currentRowNum + 2);
 
                 rowDate.height = 18;
-                rowFirst.height = 28; // 1stは大きめ
+                rowFirst.height = 28; 
                 rowSecond.height = 22;
 
                 for (let d = 0; d < 7; d++) {
@@ -1329,14 +1664,13 @@
                     const dayNum = dateObj.getDate();
                     const isTargetMonth = currentMonth === month;
                     
-                    // 背景色の決定
                     let bgColor = 'FFFFFFFF'; 
                     if (!isTargetMonth) {
-                        bgColor = 'FFBFBFBF'; // 対象月外はグレー
+                        bgColor = 'FFBFBFBF';
                     } else if (d === 0 || globalHolidays.has(dayNum)) {
-                        bgColor = 'FFF7A8E6'; // 日曜・休診日ピンク
+                        bgColor = 'FFF7A8E6'; 
                     } else if (d === 6) {
-                        bgColor = 'FFA0C8EF'; // 土曜水色
+                        bgColor = 'FFA0C8EF';
                     }
 
                     const fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
@@ -1344,18 +1678,15 @@
                     cellFirst.fill = fill;
                     cellSecond.fill = fill;
 
-                    // 文字位置（中央揃え）
                     const alignCenter = { horizontal: 'center', vertical: 'middle' };
                     cellDate.alignment = alignCenter;
                     cellFirst.alignment = alignCenter;
                     cellSecond.alignment = alignCenter;
 
-                    // フォント設定 (1stは大きく太字、2ndは小さく少しグレー)
                     cellDate.font = { name: 'ＭＳ Ｐゴシック', size: 10 };
                     cellFirst.font = { name: 'ＭＳ Ｐゴシック', size: 14, bold: true, color: { argb: 'FF000000' } };
                     cellSecond.font = { name: 'ＭＳ Ｐゴシック', size: 10, color: { argb: 'FF555555' } };
 
-                    // 値の代入
                     if (isTargetMonth) {
                         cellDate.value = dayNum;
                         if (schedMap[dayNum]) {
@@ -1366,7 +1697,6 @@
                         }
                     }
 
-                    // 罫線の設定 (各日の外枠を太枠[medium]、内側を細線[thin])
                     const thick = { style: 'medium' };
                     const thin = { style: 'thin' };
 
@@ -1374,7 +1704,6 @@
                     cellFirst.border = { left: thick, right: thick, bottom: thin };
                     cellSecond.border = { left: thick, right: thick, bottom: thick };
 
-                    // 日付を1日進める
                     dateObj.setDate(dateObj.getDate() + 1);
                 }
                 
@@ -1392,5 +1721,3 @@
     </script>
 </body>
 </html>
-
-
