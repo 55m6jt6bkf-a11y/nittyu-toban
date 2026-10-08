@@ -952,8 +952,15 @@
                     } else if (dateCell.value instanceof Date) {
                         date = dateCell.value.getDate();
                     } else {
-                        const match = String(dateCell.value || '').match(/^([1-9]|[12][0-9]|3[01])(?!\d)/);
-                        if (match) date = parseInt(match[1], 10);
+                        // 11/17(火) のような 月/日 形式から「日」を抽出できるように修正
+                        const valStr = String(dateCell.value || '').trim();
+                        const mdMatch = valStr.match(/\d{1,2}\/(\d{1,2})/);
+                        if (mdMatch) {
+                            date = parseInt(mdMatch[1], 10);
+                        } else {
+                            const match = valStr.match(/^([1-9]|[12][0-9]|3[01])(?!\d)/);
+                            if (match) date = parseInt(match[1], 10);
+                        }
                     }
                     
                     if (!date) return;
