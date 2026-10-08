@@ -110,13 +110,23 @@
                 </section>
 
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div class="bg-navy-800 px-5 py-3 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                        <h2 class="font-semibold"><i class="fa-solid fa-users-gear mr-2"></i>対象者と除外条件（日付をカンマ区切りで入力）</h2>
-                        <div class="flex flex-wrap gap-2">
+                    <div class="bg-navy-800 px-5 py-3 text-white flex flex-col xl:flex-row justify-between items-start xl:items-center gap-3">
+                        <h2 class="font-semibold whitespace-nowrap"><i class="fa-solid fa-users-gear mr-2"></i>対象者と除外条件</h2>
+                        <div class="flex flex-wrap gap-2 justify-end w-full">
+                            <button onclick="undo()" class="bg-gray-500 hover:bg-gray-400 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="直前の状態に戻す">
+                                <i class="fa-solid fa-rotate-left mr-1"></i>戻す
+                            </button>
+                            <div class="w-px bg-navy-600 hidden sm:block"></div>
                             <button onclick="openResetConfirmModal()" class="bg-red-600 hover:bg-red-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="現在の月の除外日をすべてクリアします">
                                 <i class="fa-solid fa-eraser mr-1"></i>除外日リセット
                             </button>
                             <div class="w-px bg-navy-600 hidden sm:block"></div>
+                            
+                            <button onclick="document.getElementById('excelFileInput').click()" class="bg-purple-600 hover:bg-purple-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="当直・消化器当番のExcelから自動読込">
+                                <i class="fa-solid fa-file-excel mr-1"></i>当直・消化器当番読込
+                            </button>
+                            <input type="file" id="excelFileInput" accept=".xlsx" class="hidden" onchange="importExcel(event)">
+                            
                             <button onclick="exportCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="条件データをCSVで出力">
                                 <i class="fa-solid fa-file-export mr-1"></i>条件出力
                             </button>
@@ -159,7 +169,7 @@
                     </div>
                     <div class="p-4 bg-gray-50 border-t border-gray-200 flex justify-end items-center gap-4">
                         <span id="loadingIndicator" class="hidden text-navy-600 text-sm font-medium">
-                            <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> 最適なスケジュールを計算中...
+                            <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> 処理中...
                         </span>
                         <button onclick="startGeneration()" class="bg-navy-700 hover:bg-navy-800 text-white font-bold py-2 px-6 rounded shadow-md flex items-center transition duration-150 ease-in-out transform hover:scale-105 active:scale-95">
                             <i class="fa-solid fa-wand-magic-sparkles mr-2"></i>スケジュール自動生成
@@ -326,7 +336,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let members = [
             { id: 1, name: "瓜田宗", attribute: "教員・スタッフ", maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "18", shoukaki: "", fuzai: "", shinkan: "6,13,20,27" },
@@ -344,7 +354,31 @@
         let isRemoteUpdating = false;
         let currentUser = null;
         let currentUnsubscribe = null;
+        let isMasterLoaded = false;
         
+        // 履歴管理スタック（Undo機能用）
+        let historyStack = [];
+
+        window.saveHistory = function() {
+            if (historyStack.length >= 20) {
+                historyStack.shift();
+            }
+            historyStack.push(JSON.stringify(members));
+        }
+
+        window.undo = function() {
+            if (historyStack.length > 0) {
+                let prev = historyStack.pop();
+                members = JSON.parse(prev);
+                renderMembers();
+                resetSchedule();
+                saveToFirestore();
+                showAlert("直前の状態に戻しました。");
+            } else {
+                showAlert("これ以上戻す操作はありません。");
+            }
+        }
+
         // --- Firebase Initialization ---
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
             apiKey: "AIzaSyCogiKhD0yR89ARKaaHvszijRiorJozRLM",
@@ -410,7 +444,7 @@
                     currentScheduleData = null;
                     renderSchedule(null);
                     
-                    // 月が変わって新しいデータを作成する際、基本設定は引き継ぎ、除外日だけをリセットする
+                    // 月が変わって新しいデータを作成する際、基本設定（直近の構成やマスター）は引き継ぎ、除外日だけをリセットする
                     members = members.map(m => ({
                         ...m,
                         douchoku: "",
@@ -442,6 +476,15 @@
             };
             try {
                 await setDoc(stateRef, state);
+                
+                // 次の月などにメンバー構成（名前、属性、上限）を引き継ぐため、マスターデータとして保存
+                const masterRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'master');
+                const masterMembers = members.map(m => ({
+                    id: m.id, name: m.name, attribute: m.attribute, 
+                    maxFirstShifts: m.maxFirstShifts, maxSecondShifts: m.maxSecondShifts
+                }));
+                await setDoc(masterRef, { members: masterMembers });
+                
                 showSyncStatus();
             } catch (e) {
                 console.error("Error saving to Firestore", e);
@@ -473,9 +516,30 @@
             initAuth();
         });
 
-        onAuthStateChanged(auth, (user) => {
+        onAuthStateChanged(auth, async (user) => {
             currentUser = user;
             if (user) {
+                // 初回ログイン時、クラウドからメンバーのマスターデータ（過去の最新の基本構成）を読み込む
+                if (!isMasterLoaded) {
+                    try {
+                        const masterRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'master');
+                        const docSnap = await getDoc(masterRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.members && data.members.length > 0) {
+                                // 基本情報のみをマスターから復元し、除外日は空にする
+                                members = data.members.map(m => ({
+                                    ...m, douchoku: "", shoukaki: "", fuzai: "", shinkan: ""
+                                }));
+                                renderMembers();
+                            }
+                        }
+                    } catch(e) {
+                        console.error("Master load error", e);
+                    }
+                    isMasterLoaded = true;
+                }
+                
                 const monthVal = document.getElementById('targetMonth').value;
                 setupFirestoreListener(monthVal);
             }
@@ -584,6 +648,7 @@
         }
 
         window.addMember = function() {
+            saveHistory();
             members.push({
                 id: generateId(), name: `新規担当者`, attribute: "専攻医1年目",
                 maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "", fuzai: "", shinkan: ""
@@ -593,12 +658,14 @@
         }
 
         window.removeMember = function(id) {
+            saveHistory();
             members = members.filter(m => m.id !== id);
             renderMembers();
             saveToFirestore();
         }
 
         window.updateMember = function(id, field, value) {
+            saveHistory();
             const member = members.find(m => m.id === id);
             if (member) {
                 if(field === 'maxFirstShifts' || field === 'maxSecondShifts') {
@@ -611,7 +678,6 @@
             }
         }
 
-        // --- 除外日リセット関連 ---
         window.openResetConfirmModal = function() {
             document.getElementById('resetConfirmModal').classList.remove('hidden');
         }
@@ -621,7 +687,7 @@
         }
 
         window.executeResetExclusions = function() {
-            // 全員の除外日を空にする
+            saveHistory();
             members = members.map(m => ({
                 ...m,
                 douchoku: "",
@@ -753,6 +819,9 @@
         window.importCSV = function(event) {
             const file = event.target.files[0];
             if (!file) return;
+            
+            saveHistory(); 
+            
             const reader = new FileReader();
             reader.onload = function(e) {
                 const text = e.target.result;
@@ -789,6 +858,300 @@
                 document.getElementById('csvFileInput').value = "";
             };
             reader.readAsText(file); 
+        }
+
+        // --- Excelからの当直・消化器当番読込 ---
+        function getSafeCell(sheet, r, c) {
+            try {
+                let cell = sheet.getCell(r, c);
+                if (cell && cell.isMerged && cell.master) {
+                    return cell.master;
+                }
+                return cell;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function getCellValueString(val) {
+            if (val === null || val === undefined) return "";
+            if (typeof val === 'object') {
+                if (val.richText) return val.richText.map(rt => rt.text).join('');
+                if (val.result !== undefined) { 
+                    if (val.result instanceof Date) return String(val.result.getDate());
+                    if (val.result.error) return ""; 
+                    return String(val.result);
+                }
+                if (val instanceof Date) return String(val.getDate());
+                if (val.error) return "";
+                return "";
+            }
+            return String(val);
+        }
+
+        function normalizeName(name) {
+            if (!name) return "";
+            let n = String(name).replace(/[\s　]/g, ''); 
+            if (n.includes('山田(陽)') || n.includes('山田（陽）') || n.includes('山田陽') || n === '山田') return '山田';
+            return n.replace(/\(.*?\)|（.*?）/g, '');
+        }
+
+        function parseDateCell(val) {
+            if (!val) return null;
+            let s = String(val).trim();
+            let cleanStr = s.replace(/\s+/g, '');
+            
+            // "1(月)", "31（火）", "10/1(火)" などの形式への対応
+            let m2 = cleanStr.match(/(?:1[0-2]|[1-9])[\/\.月]?(\d{1,2})[\(（][日月火水木金土祝休][\)）]/);
+            if (m2) {
+                let n = parseInt(m2[1], 10);
+                if (n >= 1 && n <= 31) return n;
+            }
+            
+            // "10.1", "10/1", "1日" などの形式への対応
+            let m3 = cleanStr.match(/(?:1[0-2]|[1-9])[\/\.月](\d{1,2})[日]?/);
+            if (m3) {
+                let n = parseInt(m3[1], 10);
+                if (n >= 1 && n <= 31) return n;
+            }
+            
+            // "14祝", "12土" などのように数字の直後に曜日や祝などの文字が来るパターン
+            let m4 = cleanStr.match(/^(\d{1,2})[日月火水木金土祝休祭]/);
+            if (m4) {
+                let n = parseInt(m4[1], 10);
+                if (n >= 1 && n <= 31) return n;
+            }
+
+            let m5 = cleanStr.match(/^(\d{1,2})[日]$/);
+            if (m5) {
+                let n = parseInt(m5[1], 10);
+                if (n >= 1 && n <= 31) return n;
+            }
+            
+            // 単独の数字（1〜31）の場合
+            if (/^0*([1-9]|[12][0-9]|3[01])$/.test(cleanStr)) {
+                return parseInt(cleanStr, 10);
+            }
+            
+            // 先頭が数字で始まり、後ろに文字が続くパターン（"12 スポーツの日", "12 土", "12(祝)" など）を確実に拾う
+            let m6 = s.match(/^0*([1-9]|[12][0-9]|3[01])(?:\s+|[^0-9]).*$/);
+            if (m6) {
+                 if (s.length <= 15) {
+                     return parseInt(m6[1], 10);
+                 }
+            }
+
+            return null;
+        }
+
+        function findDateForCell(sheet, startRow, startCol) {
+            // カレンダー形式において、真上（同日ブロック内）を探す。隣の曜日（左右）には絶対に探さない。
+            for (let r = startRow - 1; r >= Math.max(1, startRow - 8); r--) {
+                let cell = getSafeCell(sheet, r, startCol);
+                if (cell) {
+                    let val = getCellValueString(cell.value);
+                    let dateNum = parseDateCell(val);
+                    if (dateNum !== null) {
+                        return dateNum;
+                    }
+                }
+            }
+            
+            // もし真上に無ければ、少し左斜め上（同じ日のブロック内で結合がずれている場合）を探す
+            for (let r = startRow - 1; r >= Math.max(1, startRow - 4); r--) {
+                let cell = getSafeCell(sheet, r, startCol - 1);
+                if (cell) {
+                    let val = getCellValueString(cell.value);
+                    let dateNum = parseDateCell(val);
+                    if (dateNum !== null) {
+                        return dateNum;
+                    }
+                }
+            }
+
+            // それでも無ければ同じ行の左方向を探す（リスト形式を想定）
+            for (let c = startCol - 1; c >= Math.max(1, startCol - 10); c--) {
+                let cell = getSafeCell(sheet, startRow, c);
+                if (cell) {
+                    let val = getCellValueString(cell.value);
+                    let dateNum = parseDateCell(val);
+                    if (dateNum !== null) {
+                        return dateNum;
+                    }
+                }
+            }
+            return null;
+        }
+
+        function findMembersInText(text) {
+            let found = [];
+            let normText = normalizeName(text);
+            members.forEach(m => {
+                let mName = normalizeName(m.name);
+                if (normText.includes(mName)) {
+                    found.push(m.name);
+                }
+            });
+            found.sort((a, b) => b.length - a.length);
+            let result = [];
+            for (let f of found) {
+                if (!result.some(r => r !== f && r.includes(f))) {
+                    result.push(f);
+                }
+            }
+            return result;
+        }
+
+        window.importExcel = async function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            saveHistory(); 
+            document.getElementById('loadingIndicator').classList.remove('hidden');
+
+            try {
+                const buffer = await file.arrayBuffer();
+                const workbook = new ExcelJS.Workbook();
+                await workbook.xlsx.load(buffer);
+
+                let updates = { douchoku: {}, shoukaki: {} };
+
+                workbook.eachSheet((worksheet) => {
+                    worksheet.eachRow((row, rowNumber) => {
+                        row.eachCell((cell, colNumber) => {
+                            let valStr = getCellValueString(cell.value).trim();
+                            if (!valStr) return;
+                            
+                            valStr = valStr.replace(/\s+/g, ' ');
+
+                            let exactYoru = valStr.includes('[夜]') || valStr.includes('【夜】') || valStr === '夜';
+                            let exactKyuYoru = valStr.includes('[救夜]') || valStr.includes('【救夜】') || valStr === '救夜';
+
+                            if (exactYoru || exactKyuYoru) {
+                                let foundNames = { yoru: [], kyuYoru: [] };
+                                
+                                let namesInCell = findMembersInText(valStr);
+                                
+                                if (namesInCell.length > 0) {
+                                    namesInCell.forEach(n => {
+                                        let p = valStr.indexOf(n);
+                                        let subStrAfter = valStr.substring(p);
+                                        
+                                        if (exactKyuYoru && exactYoru) {
+                                            if (subStrAfter.includes('[救夜]') || subStrAfter.includes('【救夜】') || subStrAfter.includes('救夜')) {
+                                                foundNames.kyuYoru.push(n);
+                                            } else {
+                                                foundNames.yoru.push(n);
+                                            }
+                                        } else if (exactKyuYoru) {
+                                            foundNames.kyuYoru.push(n);
+                                        } else if (exactYoru) {
+                                            foundNames.yoru.push(n);
+                                        }
+                                    });
+                                } else {
+                                    let cleanStr = valStr.replace(/\[夜\]|\[救夜\]|【夜】|【救夜】|夜|救夜|\s/g, '');
+                                    
+                                    if (cleanStr.match(/[一-龥ぁ-んァ-ヶa-zA-Z]/)) {
+                                        // セル内に未登録の文字（宮下、金など）が含まれている場合は他を探さない
+                                    } else {
+                                        // 右（隣の曜日）は絶対に探さない。真上、左、真下の順で探索する。
+                                        let offsets = [
+                                            {dr: -1, dc: 0}, // 真上
+                                            {dr: 0, dc: -1}, // 左
+                                            {dr: 1, dc: 0}   // 真下
+                                        ];
+
+                                        for (let off of offsets) {
+                                            let r = rowNumber + off.dr;
+                                            let c = colNumber + off.dc;
+                                            if (r >= 1 && c >= 1 && r <= worksheet.rowCount && c <= worksheet.columnCount) {
+                                                let nCell = getSafeCell(worksheet, r, c);
+                                                if (nCell) {
+                                                    let nValStr = getCellValueString(nCell.value).trim();
+                                                    if (nValStr && nValStr.match(/[一-龥ぁ-んァ-ヶa-zA-Z]/)) {
+                                                        let namesInNeighbor = findMembersInText(nValStr.replace(/\s+/g, ''));
+                                                        if (namesInNeighbor.length > 0) {
+                                                            if (exactKyuYoru && exactYoru) {
+                                                                foundNames.kyuYoru.push(...namesInNeighbor);
+                                                                foundNames.yoru.push(...namesInNeighbor);
+                                                            } else if (exactKyuYoru) {
+                                                                foundNames.kyuYoru.push(...namesInNeighbor);
+                                                            } else if (exactYoru) {
+                                                                foundNames.yoru.push(...namesInNeighbor);
+                                                            }
+                                                            break; 
+                                                        } else {
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                let dateNum = findDateForCell(worksheet, rowNumber, colNumber);
+                                if (!dateNum) {
+                                    dateNum = parseDateCell(valStr);
+                                }
+
+                                if (dateNum) {
+                                    foundNames.yoru.forEach(n => {
+                                        if (!updates.shoukaki[n]) updates.shoukaki[n] = new Set();
+                                        updates.shoukaki[n].add(dateNum);
+                                    });
+                                    foundNames.kyuYoru.forEach(n => {
+                                        if (!updates.douchoku[n]) updates.douchoku[n] = new Set();
+                                        updates.douchoku[n].add(dateNum);
+                                    });
+                                }
+                            }
+                        });
+                    });
+                });
+
+                let updatedCount = 0;
+                members.forEach(m => {
+                    let mName = m.name;
+                    
+                    let addExtractedDates = (extractedMap, fieldName) => {
+                        let datesToAdd = [];
+                        if (extractedMap[mName]) {
+                            datesToAdd = Array.from(extractedMap[mName]);
+                        }
+                        
+                        if (datesToAdd.length > 0) {
+                            let current = parseDates(m[fieldName]);
+                            let newDates = Array.from(new Set([...current, ...datesToAdd])).sort((a,b)=>a-b);
+                            m[fieldName] = newDates.join(',');
+                            return true;
+                        }
+                        return false;
+                    };
+
+                    let up1 = addExtractedDates(updates.shoukaki, 'shoukaki');
+                    let up2 = addExtractedDates(updates.douchoku, 'douchoku');
+                    if (up1 || up2) updatedCount++;
+                });
+
+                renderMembers();
+                resetSchedule();
+                saveToFirestore();
+                
+                if (updatedCount > 0) {
+                    showAlert(`Excelから当番予定を読み込み反映させました！`);
+                } else {
+                    showAlert(`ファイルを読み込みましたが、一致する担当者や日付が見つかりませんでした。`);
+                }
+
+            } catch (e) {
+                console.error("Excel import error:", e);
+                showAlert(`Excelファイルの解析に失敗しました: ${e.message}`);
+            } finally {
+                document.getElementById('excelFileInput').value = "";
+                document.getElementById('loadingIndicator').classList.add('hidden');
+            }
         }
 
         function parseDates(dateStr) {
@@ -1168,7 +1531,6 @@
                 showAlert(`${editContext.date}日と${exchangeDate}日の担当を入れ替えました。`);
             }
         }
-        // --- ここまで ---
 
         function renderSummary(schedule) {
             const shiftCounts = {};
@@ -1200,7 +1562,7 @@
             members.forEach(member => {
                 const counts = shiftCounts[member.name];
                 if(counts) {
-                     summaryHTML += `
+                    summaryHTML += `
                         <tr class="hover:bg-gray-50 transition-colors">
                             <td class="px-4 py-2 text-gray-800 font-medium">${member.name}</td>
                             <td class="px-3 py-2 text-center text-gray-600">${counts.first}</td>
