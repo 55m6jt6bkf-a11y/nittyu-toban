@@ -908,6 +908,14 @@
             const file = event.target.files[0];
             if (!file) return;
 
+            const targetMonthInput = document.getElementById('targetMonth').value;
+            if (!targetMonthInput) {
+                showAlert('先に対象年月を設定してください。');
+                document.getElementById('gyomuFileInput').value = '';
+                return;
+            }
+            const targetMonthNum = parseInt(targetMonthInput.split('-')[1], 10);
+
             document.getElementById('loadingIndicator').classList.remove('hidden');
 
             try {
@@ -953,28 +961,40 @@
                 worksheet.eachRow((row, rowNumber) => {
                     const dateCell = row.getCell(1);
                     let date = null;
+                    let rowMonth = null;
+
                     if (typeof dateCell.value === 'number') {
-                        if (dateCell.value >= 1 && dateCell.value <= 31) date = dateCell.value;
+                        if (dateCell.value >= 1 && dateCell.value <= 31) {
+                            date = dateCell.value;
+                            rowMonth = targetMonthNum; 
+                        }
                     } else if (dateCell.value instanceof Date) {
                         date = dateCell.value.getDate();
+                        rowMonth = dateCell.value.getMonth() + 1;
                     } else {
-                        // 11/17(火) のような 月/日 形式から「日」を抽出できるように修正
                         const valStr = String(dateCell.value || '').trim();
-                        const mdMatch = valStr.match(/\d{1,2}\/(\d{1,2})/);
+                        // 11/17(火) などの 形式から月と日を抽出
+                        const mdMatch = valStr.match(/(\d{1,2})\/(\d{1,2})/);
                         if (mdMatch) {
-                            date = parseInt(mdMatch[1], 10);
+                            rowMonth = parseInt(mdMatch[1], 10);
+                            date = parseInt(mdMatch[2], 10);
                         } else {
                             const match = valStr.match(/^([1-9]|[12][0-9]|3[01])(?!\d)/);
-                            if (match) date = parseInt(match[1], 10);
+                            if (match) {
+                                date = parseInt(match[1], 10);
+                                rowMonth = targetMonthNum; // 月の記載がない場合は対象月と仮定
+                            }
                         }
                     }
                     
                     if (!date) return;
+                    // 対象月以外のデータは無視する
+                    if (rowMonth !== null && rowMonth !== targetMonthNum) return;
 
                     const extractNames = (text) => {
                         if (!text) return [];
-                        // 改行、全角半角スペース、カンマ、中点などで分割
-                        return text.split(/[\n,、\s　・]+/).filter(n => n);
+                        // 改行、全角半角スペース、カンマ、中点、矢印などで分割
+                        return text.split(/[\n,、\s　・→]+/).filter(n => n);
                     };
 
                     const processName = (rawName) => {
@@ -982,13 +1002,14 @@
                         // 旧は無視
                         if (rawName.includes('旧')) return null;
                         
-                        let processed = rawName.replace(/新/g, ''); // 新は文字を消して採用
+                        // (新) や 新 などの文字を消して採用
+                        let processed = rawName.replace(/[\(（]新[\)）]/g, '').replace(/新/g, ''); 
                         
                         // 山田陽の処理
-                        if (/^山田[（\(]?陽[）\)]?$/.test(processed)) {
+                        if (processed.includes('山田') && processed.includes('陽')) {
                             processed = '山田';
                         } else {
-                            // その他のカッコ書き（当直、AM等）を削除して名前だけにする
+                            // その他のカッコ書き（当直、明け、AM等）を削除して名前だけにする
                             processed = processed.replace(/[（\(].*?[）\)]/g, '');
                         }
                         
