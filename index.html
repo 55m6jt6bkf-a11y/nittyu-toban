@@ -127,6 +127,11 @@
                             </button>
                             <input type="file" id="excelFileInput" accept=".xlsx" class="hidden" onchange="importExcel(event)">
                             
+                            <button onclick="document.getElementById('excelFileInput2').click()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="新患・外勤・その他休暇のExcelから自動読込">
+                                <i class="fa-solid fa-file-excel mr-1"></i>新患・外勤等読込
+                            </button>
+                            <input type="file" id="excelFileInput2" accept=".xlsx" class="hidden" onchange="importExcelShinkanGaikin(event)">
+                            
                             <button onclick="exportCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="条件データをCSVで出力">
                                 <i class="fa-solid fa-file-export mr-1"></i>条件出力
                             </button>
@@ -889,11 +894,35 @@
             return String(val);
         }
 
-        function normalizeName(name) {
-            if (!name) return "";
-            let n = String(name).replace(/[\s　]/g, ''); 
-            if (n.includes('山田(陽)') || n.includes('山田（陽）') || n.includes('山田陽') || n === '山田') return '山田';
-            return n.replace(/\(.*?\)|（.*?）/g, '');
+        function findMembersInText(text) {
+            if (!text) return [];
+            let found = [];
+            let cleanText = String(text).replace(/[\s　]/g, '');
+            
+            // 「山田潤」など、アプリに関係のない人物の誤検知を事前に除外
+            cleanText = cleanText.replace(/山田潤/g, '');
+            
+            // 表記揺れの吸収（複数人書かれていても安全に置換）
+            cleanText = cleanText.replace(/山田\(陽\)/g, '山田')
+                                 .replace(/山田（陽）/g, '山田')
+                                 .replace(/山田陽/g, '山田');
+
+            members.forEach(m => {
+                // メンバー名からカッコ表記等を除去したベースの名前（例: "瓜田宗"）
+                let mName = m.name.replace(/[\s　]/g, '').replace(/\(.*?\)|（.*?）/g, '');
+                if (cleanText.includes(mName)) {
+                    found.push(m.name);
+                }
+            });
+            
+            found.sort((a, b) => b.length - a.length);
+            let result = [];
+            for (let f of found) {
+                if (!result.some(r => r !== f && r.includes(f))) {
+                    result.push(f);
+                }
+            }
+            return result;
         }
 
         function parseDateCell(val) {
@@ -981,25 +1010,6 @@
                 }
             }
             return null;
-        }
-
-        function findMembersInText(text) {
-            let found = [];
-            let normText = normalizeName(text);
-            members.forEach(m => {
-                let mName = normalizeName(m.name);
-                if (normText.includes(mName)) {
-                    found.push(m.name);
-                }
-            });
-            found.sort((a, b) => b.length - a.length);
-            let result = [];
-            for (let f of found) {
-                if (!result.some(r => r !== f && r.includes(f))) {
-                    result.push(f);
-                }
-            }
-            return result;
         }
 
         window.importExcel = async function(event) {
@@ -1150,6 +1160,188 @@
                 showAlert(`Excelファイルの解析に失敗しました: ${e.message}`);
             } finally {
                 document.getElementById('excelFileInput').value = "";
+                document.getElementById('loadingIndicator').classList.add('hidden');
+            }
+        }
+
+        // --- Excelからの新患・外勤・その他休暇読込 ---
+        window.importExcelShinkanGaikin = async function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            saveHistory(); 
+            document.getElementById('loadingIndicator').classList.remove('hidden');
+
+            try {
+                const buffer = await file.arrayBuffer();
+                const workbook = new ExcelJS.Workbook();
+                await workbook.xlsx.load(buffer);
+
+                let updates = { shinkan: {}, fuzai: {} };
+
+                workbook.eachSheet((worksheet) => {
+                    let headerRowIndex = -1;
+                    let cols = { date: -1, shinkan: [], gaikin: [], sonota: [] };
+
+                    // 1. ヘッダー行の検索（「新患」「外勤」「休暇」などの文字がある行を探す）
+                    worksheet.eachRow((row, rowNumber) => {
+                        let tempCols = { date: -1, shinkan: [], gaikin: [], sonota: [] };
+                        
+                        row.eachCell((cell, colNumber) => {
+                            let val = getCellValueString(cell.value).trim().replace(/\s+/g, '');
+                            if (val.includes('新患')) tempCols.shinkan.push(colNumber);
+                            if (val.includes('外勤')) tempCols.gaikin.push(colNumber);
+                            if (val.includes('その他') || val.includes('休暇') || val === '休') {
+                                if (!val.includes('外勤')) tempCols.sonota.push(colNumber);
+                            }
+                            // 日付列らしきもの（A〜C列あたりにある「日」「日付」など）
+                            if ((val === '日' || val.includes('日付') || val.includes('日(') || val === '曜日') && colNumber <= 3) {
+                                tempCols.date = colNumber;
+                            }
+                        });
+                        
+                        if (tempCols.shinkan.length > 0 || tempCols.gaikin.length > 0 || tempCols.sonota.length > 0) {
+                            if (headerRowIndex === -1) {
+                                headerRowIndex = rowNumber;
+                                cols = tempCols;
+                                if (cols.date === -1) cols.date = 1; // 見つからない場合はデフォルトでA列を日付列とみなす
+                            }
+                        }
+                    });
+
+                    // 2. リスト形式の表が見つかった場合のデータ抽出
+                    if (headerRowIndex !== -1) {
+                        worksheet.eachRow((row, rowNumber) => {
+                            if (rowNumber <= headerRowIndex) return;
+                            
+                            let dateCell = getSafeCell(worksheet, rowNumber, cols.date);
+                            let dateNum = parseDateCell(getCellValueString(dateCell ? dateCell.value : null));
+                            
+                            // 指定した列で日付が取れなかった場合、左端の列(A列, B列)も予備として確認
+                            if (!dateNum) {
+                                let altCell1 = getSafeCell(worksheet, rowNumber, 1);
+                                dateNum = parseDateCell(getCellValueString(altCell1 ? altCell1.value : null));
+                            }
+                            if (!dateNum) {
+                                let altCell2 = getSafeCell(worksheet, rowNumber, 2);
+                                dateNum = parseDateCell(getCellValueString(altCell2 ? altCell2.value : null));
+                            }
+                            
+                            if (dateNum) {
+                                // 新患の抽出
+                                cols.shinkan.forEach(c => {
+                                    let cell = getSafeCell(worksheet, rowNumber, c);
+                                    let names = findMembersInText(getCellValueString(cell ? cell.value : null));
+                                    names.forEach(n => {
+                                        if (!updates.shinkan[n]) updates.shinkan[n] = new Set();
+                                        updates.shinkan[n].add(dateNum);
+                                    });
+                                });
+                                // 外勤の抽出
+                                cols.gaikin.forEach(c => {
+                                    let cell = getSafeCell(worksheet, rowNumber, c);
+                                    let names = findMembersInText(getCellValueString(cell ? cell.value : null));
+                                    names.forEach(n => {
+                                        if (!updates.fuzai[n]) updates.fuzai[n] = new Set();
+                                        updates.fuzai[n].add(dateNum);
+                                    });
+                                });
+                                // その他休暇の抽出
+                                cols.sonota.forEach(c => {
+                                    let cell = getSafeCell(worksheet, rowNumber, c);
+                                    let names = findMembersInText(getCellValueString(cell ? cell.value : null));
+                                    names.forEach(n => {
+                                        if (!updates.fuzai[n]) updates.fuzai[n] = new Set();
+                                        updates.fuzai[n].add(dateNum);
+                                    });
+                                });
+                            }
+                        });
+                    } else {
+                        // 3. リスト形式ではなく、カレンダーやセル内に直接書かれている場合のフォールバック処理
+                        worksheet.eachRow((row, rowNumber) => {
+                            row.eachCell((cell, colNumber) => {
+                                let valStr = getCellValueString(cell.value).trim();
+                                if (!valStr) return;
+                                
+                                let isShinkan = valStr.includes('新患');
+                                let isGaikin = valStr.includes('外勤');
+                                let isSonota = valStr.includes('その他') || valStr.includes('休暇') || valStr === '休';
+                                
+                                if (isShinkan || isGaikin || isSonota) {
+                                    let namesInCell = findMembersInText(valStr);
+                                    
+                                    // セル内に名前がない場合は、右や下を探す
+                                    if (namesInCell.length === 0) {
+                                        let rightCell = getSafeCell(worksheet, rowNumber, colNumber + 1);
+                                        if (rightCell) namesInCell.push(...findMembersInText(getCellValueString(rightCell.value)));
+                                        
+                                        let bottomCell = getSafeCell(worksheet, rowNumber + 1, colNumber);
+                                        if (bottomCell && namesInCell.length === 0) {
+                                             namesInCell.push(...findMembersInText(getCellValueString(bottomCell.value)));
+                                        }
+                                    }
+                                    
+                                    if (namesInCell.length > 0) {
+                                        let dateNum = findDateForCell(worksheet, rowNumber, colNumber) || parseDateCell(valStr);
+                                        if (dateNum) {
+                                            namesInCell.forEach(n => {
+                                                if (isShinkan) {
+                                                    if (!updates.shinkan[n]) updates.shinkan[n] = new Set();
+                                                    updates.shinkan[n].add(dateNum);
+                                                }
+                                                if (isGaikin || isSonota) {
+                                                    if (!updates.fuzai[n]) updates.fuzai[n] = new Set();
+                                                    updates.fuzai[n].add(dateNum);
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            });
+                        });
+                    }
+                });
+
+                let updatedCount = 0;
+                members.forEach(m => {
+                    let mName = m.name;
+                    
+                    let addExtractedDates = (extractedMap, fieldName) => {
+                        let datesToAdd = [];
+                        if (extractedMap[mName]) {
+                            datesToAdd = Array.from(extractedMap[mName]);
+                        }
+                        
+                        if (datesToAdd.length > 0) {
+                            let current = parseDates(m[fieldName]);
+                            let newDates = Array.from(new Set([...current, ...datesToAdd])).sort((a,b)=>a-b);
+                            m[fieldName] = newDates.join(',');
+                            return true;
+                        }
+                        return false;
+                    };
+
+                    let up1 = addExtractedDates(updates.shinkan, 'shinkan');
+                    let up2 = addExtractedDates(updates.fuzai, 'fuzai'); // 外勤とその他休暇は両方「外勤・休暇」枠に統合
+                    if (up1 || up2) updatedCount++;
+                });
+
+                renderMembers();
+                resetSchedule();
+                saveToFirestore();
+                
+                if (updatedCount > 0) {
+                    showAlert(`Excelから新患・外勤等の予定を読み込み反映させました！`);
+                } else {
+                    showAlert(`ファイルを読み込みましたが、一致する担当者や日付が見つかりませんでした。`);
+                }
+
+            } catch (e) {
+                console.error("Excel import error:", e);
+                showAlert(`Excelファイルの解析に失敗しました: ${e.message}`);
+            } finally {
+                document.getElementById('excelFileInput2').value = "";
                 document.getElementById('loadingIndicator').classList.add('hidden');
             }
         }
