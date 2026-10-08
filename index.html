@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
-    <!-- Excel出力・読込用ライブラリ -->
+    <!-- Excel出力用ライブラリ -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
@@ -110,25 +110,13 @@
                 </section>
 
                 <section class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div class="bg-navy-800 px-5 py-3 text-white flex flex-col xl:flex-row justify-between items-start xl:items-center gap-3">
-                        <h2 class="font-semibold whitespace-nowrap"><i class="fa-solid fa-users-gear mr-2"></i>対象者と除外条件</h2>
-                        <div class="flex flex-wrap gap-2 justify-end w-full">
-                            <!-- 追加: Undoボタン -->
-                            <button onclick="undo()" class="bg-gray-500 hover:bg-gray-400 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="直前の状態に戻す">
-                                <i class="fa-solid fa-rotate-left mr-1"></i>戻す
-                            </button>
-                            <div class="w-px bg-navy-600 hidden sm:block"></div>
+                    <div class="bg-navy-800 px-5 py-3 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                        <h2 class="font-semibold"><i class="fa-solid fa-users-gear mr-2"></i>対象者と除外条件（日付をカンマ区切りで入力）</h2>
+                        <div class="flex flex-wrap gap-2">
                             <button onclick="openResetConfirmModal()" class="bg-red-600 hover:bg-red-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="現在の月の除外日をすべてクリアします">
-                                <i class="fa-solid fa-eraser mr-1"></i>リセット
+                                <i class="fa-solid fa-eraser mr-1"></i>除外日リセット
                             </button>
                             <div class="w-px bg-navy-600 hidden sm:block"></div>
-                            
-                            <!-- 追加: Excel読込ボタン -->
-                            <button onclick="document.getElementById('excelFileInput').click()" class="bg-purple-600 hover:bg-purple-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="当直・消化器当番のExcelから自動読込">
-                                <i class="fa-solid fa-file-excel mr-1"></i>当直・消化器当番読込
-                            </button>
-                            <input type="file" id="excelFileInput" accept=".xlsx" class="hidden" onchange="importExcel(event)">
-                            
                             <button onclick="exportCSV()" class="bg-green-600 hover:bg-green-500 text-white text-xs py-1.5 px-3 rounded shadow transition flex items-center" title="条件データをCSVで出力">
                                 <i class="fa-solid fa-file-export mr-1"></i>条件出力
                             </button>
@@ -171,7 +159,7 @@
                     </div>
                     <div class="p-4 bg-gray-50 border-t border-gray-200 flex justify-end items-center gap-4">
                         <span id="loadingIndicator" class="hidden text-navy-600 text-sm font-medium">
-                            <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> 処理中...
+                            <i class="fa-solid fa-circle-notch fa-spin mr-2"></i> 最適なスケジュールを計算中...
                         </span>
                         <button onclick="startGeneration()" class="bg-navy-700 hover:bg-navy-800 text-white font-bold py-2 px-6 rounded shadow-md flex items-center transition duration-150 ease-in-out transform hover:scale-105 active:scale-95">
                             <i class="fa-solid fa-wand-magic-sparkles mr-2"></i>スケジュール自動生成
@@ -357,30 +345,6 @@
         let currentUser = null;
         let currentUnsubscribe = null;
         
-        // 履歴管理スタック（Undo機能用）
-        let historyStack = [];
-
-        window.saveHistory = function() {
-            if (historyStack.length >= 20) {
-                historyStack.shift();
-            }
-            // ディープコピーを保存
-            historyStack.push(JSON.stringify(members));
-        }
-
-        window.undo = function() {
-            if (historyStack.length > 0) {
-                let prev = historyStack.pop();
-                members = JSON.parse(prev);
-                renderMembers();
-                resetSchedule();
-                saveToFirestore();
-                showAlert("直前の状態に戻しました。");
-            } else {
-                showAlert("これ以上戻す操作はありません。");
-            }
-        }
-
         // --- Firebase Initialization ---
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
             apiKey: "AIzaSyCogiKhD0yR89ARKaaHvszijRiorJozRLM",
@@ -446,6 +410,7 @@
                     currentScheduleData = null;
                     renderSchedule(null);
                     
+                    // 月が変わって新しいデータを作成する際、基本設定は引き継ぎ、除外日だけをリセットする
                     members = members.map(m => ({
                         ...m,
                         douchoku: "",
@@ -619,7 +584,6 @@
         }
 
         window.addMember = function() {
-            saveHistory();
             members.push({
                 id: generateId(), name: `新規担当者`, attribute: "専攻医1年目",
                 maxFirstShifts: 3, maxSecondShifts: 3, douchoku: "", shoukaki: "", fuzai: "", shinkan: ""
@@ -629,14 +593,12 @@
         }
 
         window.removeMember = function(id) {
-            saveHistory();
             members = members.filter(m => m.id !== id);
             renderMembers();
             saveToFirestore();
         }
 
         window.updateMember = function(id, field, value) {
-            saveHistory();
             const member = members.find(m => m.id === id);
             if (member) {
                 if(field === 'maxFirstShifts' || field === 'maxSecondShifts') {
@@ -659,7 +621,7 @@
         }
 
         window.executeResetExclusions = function() {
-            saveHistory();
+            // 全員の除外日を空にする
             members = members.map(m => ({
                 ...m,
                 douchoku: "",
@@ -791,9 +753,6 @@
         window.importCSV = function(event) {
             const file = event.target.files[0];
             if (!file) return;
-            
-            saveHistory(); // 履歴保存
-            
             const reader = new FileReader();
             reader.onload = function(e) {
                 const text = e.target.result;
@@ -832,180 +791,6 @@
             reader.readAsText(file); 
         }
 
-        // --- Excelからの当直・消化器当番読込 ---
-        function normalizeName(name) {
-            let n = name.replace(/[\s　]/g, ''); // スペース除去
-            if (n.includes('山田(陽)') || n.includes('山田（陽）') || n === '山田陽') return '山田';
-            return n;
-        }
-
-        function parseDateCell(val) {
-            if (!val) return null;
-            if (val instanceof Date) return val.getDate();
-            let s = String(val).trim();
-            if (/^\d{1,2}$/.test(s)) {
-                let n = parseInt(s, 10);
-                if (n >= 1 && n <= 31) return n;
-            }
-            let m = s.match(/(?:1[0-2]|[1-9])[\/\月](\d{1,2})[日]?/);
-            if (m) {
-                let n = parseInt(m[1], 10);
-                if (n >= 1 && n <= 31) return n;
-            }
-            return null;
-        }
-
-        function findDateForCell(sheet, startRow, startCol) {
-            // 1. カレンダー形式: 同じ列の上方向を探索
-            for (let r = startRow - 1; r >= Math.max(1, startRow - 12); r--) {
-                let val = sheet.getCell(r, startCol).value;
-                let dateNum = parseDateCell(val);
-                if (dateNum) return dateNum;
-            }
-            // 2. 左斜め上方向を探索 (結合セルなどの影響考慮)
-            for (let r = startRow - 1; r >= Math.max(1, startRow - 12); r--) {
-                for (let c = startCol - 1; c >= Math.max(1, startCol - 3); c--) {
-                    let val = sheet.getCell(r, c).value;
-                    let dateNum = parseDateCell(val);
-                    if (dateNum) return dateNum;
-                }
-            }
-            // 3. リスト形式: 同じ行の左方向を探索
-            for (let c = startCol - 1; c >= 1; c--) {
-                let val = sheet.getCell(startRow, c).value;
-                let dateNum = parseDateCell(val);
-                if (dateNum) return dateNum;
-            }
-            return null;
-        }
-
-        window.importExcel = async function(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            saveHistory(); // 履歴保存
-            document.getElementById('loadingIndicator').classList.remove('hidden');
-
-            try {
-                const buffer = await file.arrayBuffer();
-                const workbook = new ExcelJS.Workbook();
-                await workbook.xlsx.load(buffer);
-
-                let updates = { douchoku: {}, shoukaki: {} };
-
-                workbook.eachSheet((worksheet) => {
-                    worksheet.eachRow((row, rowNumber) => {
-                        row.eachCell((cell, colNumber) => {
-                            let val = cell.value;
-                            if (!val) return;
-                            if (typeof val === 'object' && val.richText) {
-                                val = val.richText.map(rt => rt.text).join('');
-                            } else {
-                                val = String(val);
-                            }
-                            val = val.replace(/\s+/g, ' ').trim();
-
-                            let isYoru = val === '[夜]' || val === '夜' || val.includes('[夜]');
-                            let isKyuYoru = val === '[救夜]' || val === '救夜' || val.includes('[救夜]');
-
-                            if (isYoru || isKyuYoru) {
-                                let nameStr = "";
-                                // 同じセル内に名前があるケース "[夜] 山田"
-                                let valAfterType = val.replace(/\[?救?夜\]?/g, '').trim();
-                                if (valAfterType.length > 0) {
-                                    nameStr = valAfterType;
-                                } else {
-                                    // 隣のセルを探す
-                                    for (let i = 1; i <= 3; i++) {
-                                        let nextCell = row.getCell(colNumber + i);
-                                        if (nextCell && nextCell.value) {
-                                            let nextVal = nextCell.value;
-                                            if (typeof nextVal === 'object' && nextVal.richText) {
-                                                nextVal = nextVal.richText.map(rt => rt.text).join('');
-                                            } else {
-                                                nextVal = String(nextVal);
-                                            }
-                                            if (nextVal.trim().length > 0) {
-                                                nameStr = nextVal.trim();
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if (nameStr) {
-                                    // 複数人指定（山田、田中等）に対応
-                                    let namesArray = nameStr.split(/[、,・\n]/).map(n => n.trim()).filter(n => n.length > 0);
-                                    let dateNum = findDateForCell(worksheet, rowNumber, colNumber);
-                                    
-                                    if (dateNum) {
-                                        namesArray.forEach(rawName => {
-                                            let n = normalizeName(rawName);
-                                            if (isYoru) {
-                                                if (!updates.shoukaki[n]) updates.shoukaki[n] = new Set();
-                                                updates.shoukaki[n].add(dateNum);
-                                            }
-                                            if (isKyuYoru) {
-                                                if (!updates.douchoku[n]) updates.douchoku[n] = new Set();
-                                                updates.douchoku[n].add(dateNum);
-                                            }
-                                        });
-                                    }
-                                }
-                            }
-                        });
-                    });
-                });
-
-                let updatedCount = 0;
-                members.forEach(m => {
-                    let mName = normalizeName(m.name);
-                    
-                    let addExtractedDates = (extractedMap, fieldName) => {
-                        let datesToAdd = [];
-                        for (const [exName, dates] of Object.entries(extractedMap)) {
-                            // 括弧を除いた名前でもマッチング(例: 竹本(代) -> 竹本)
-                            let exNameNoParen = exName.replace(/\(.*?\)|（.*?）/g, '');
-                            
-                            // 一致するか、あるいは部分的に含むか（名前の前方一致等）
-                            if (exName === mName || exNameNoParen === mName || 
-                                exName.includes(mName) || mName.includes(exNameNoParen)) {
-                                dates.forEach(d => datesToAdd.push(d));
-                            }
-                        }
-                        if (datesToAdd.length > 0) {
-                            let current = parseDates(m[fieldName]);
-                            let newDates = Array.from(new Set([...current, ...datesToAdd])).sort((a,b)=>a-b);
-                            m[fieldName] = newDates.join(',');
-                            return true;
-                        }
-                        return false;
-                    };
-
-                    let up1 = addExtractedDates(updates.shoukaki, 'shoukaki');
-                    let up2 = addExtractedDates(updates.douchoku, 'douchoku');
-                    if (up1 || up2) updatedCount++;
-                });
-
-                renderMembers();
-                resetSchedule();
-                saveToFirestore();
-                
-                if (updatedCount > 0) {
-                    showAlert(`Excelから当番予定を読み込み反映させました！`);
-                } else {
-                    showAlert(`ファイルを読み込みましたが、一致する「[夜]」「[救夜]」の担当者や日付が見つかりませんでした。`);
-                }
-
-            } catch (e) {
-                console.error(e);
-                showAlert("Excelファイルの解析に失敗しました。");
-            } finally {
-                document.getElementById('excelFileInput').value = "";
-                document.getElementById('loadingIndicator').classList.add('hidden');
-            }
-        }
-
         function parseDates(dateStr) {
             if (!dateStr) return [];
             return dateStr.split(',').map(d => parseInt(d.replace(/[^0-9]/g, ''))).filter(d => !isNaN(d));
@@ -1040,6 +825,7 @@
         function canAssign(member, date, role) {
             const excl = getMemberExclusions(member);
             if (excl.absoluteExclusions.has(date)) return false;
+            // 1stの場合、新患日を絶対回避
             if (role === 'first' && excl.shinkanExclusions.has(date)) return false;
             return true; 
         }
@@ -1269,13 +1055,16 @@
             const candidateSelect = document.getElementById('editModalCandidate');
             candidateSelect.innerHTML = '<option value="">-- 選択してください --</option>';
             
+            // 候補者の抽出
             members.forEach(m => {
                 if (m.name !== currentName) {
+                    // 対象日の除外条件をチェック
                     if (canAssign(m, date, role)) {
+                        // 同じ日の別のRoleに既にアサインされていないかチェック
                         const dayData = currentScheduleData.find(d => d.date === date);
                         const otherRole = role === 'first' ? 'second' : 'first';
                         if (dayData && dayData[otherRole] === m.name) {
-                            return; 
+                            return; // 同日に両方は担当不可とする
                         }
                         const opt = document.createElement('option');
                         opt.value = m.name;
@@ -1308,13 +1097,16 @@
             const B = members.find(m => m.name === candidateName);
             if (!A || !B) return;
             
+            // 交換可能な日を探す
             let foundExchange = false;
             currentScheduleData.forEach(day => {
                 if (day.date === editContext.date) return;
                 
                 const checkAndAdd = (roleCheck, roleLabel) => {
                     if (day[roleCheck] === B.name) {
+                        // Aさんがこの日のこのRoleを担当できるか？
                         if (canAssign(A, day.date, roleCheck)) {
+                            // 同日にAさんが既に別Roleで入っていないかチェック
                             const aOtherRole = roleCheck === 'first' ? 'second' : 'first';
                             if (day[aOtherRole] !== A.name) {
                                 foundExchange = true;
@@ -1376,6 +1168,7 @@
                 showAlert(`${editContext.date}日と${exchangeDate}日の担当を入れ替えました。`);
             }
         }
+        // --- ここまで ---
 
         function renderSummary(schedule) {
             const shiftCounts = {};
@@ -1407,7 +1200,7 @@
             members.forEach(member => {
                 const counts = shiftCounts[member.name];
                 if(counts) {
-                    summaryHTML += `
+                     summaryHTML += `
                         <tr class="hover:bg-gray-50 transition-colors">
                             <td class="px-4 py-2 text-gray-800 font-medium">${member.name}</td>
                             <td class="px-3 py-2 text-center text-gray-600">${counts.first}</td>
@@ -1467,14 +1260,17 @@
                 schedMap[d.date] = d;
             });
 
+            // ワークブックとワークシートの作成
             const workbook = new ExcelJS.Workbook();
             const worksheet = workbook.addWorksheet('当番表');
 
+            // 列の幅を設定
             worksheet.columns = [
                 { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 },
                 { width: 14 }, { width: 14 }, { width: 14 }
             ];
 
+            // 1行目: タイトル
             worksheet.getRow(1).height = 25;
             worksheet.getCell('A1').value = `${month}月`;
             worksheet.getCell('A1').font = { size: 12, name: 'ＭＳ Ｐゴシック' };
@@ -1489,6 +1285,7 @@
                 bottom: {style:'medium'}, right: {style:'medium'}
             };
 
+            // 2行目: 曜日ヘッダー
             const days = ['日', '月', '火', '水', '木', '金', '土'];
             const headerRow = worksheet.getRow(2);
             headerRow.height = 22;
@@ -1498,14 +1295,15 @@
                 cell.font = { name: 'ＭＳ Ｐゴシック', size: 11 };
                 cell.alignment = { horizontal: 'center', vertical: 'middle' };
                 
-                let bgColor = 'FFFFFFFF'; 
-                if (index === 0) bgColor = 'FFF7A8E6'; 
-                else if (index === 6) bgColor = 'FFA0C8EF'; 
+                let bgColor = 'FFFFFFFF'; // 白
+                if (index === 0) bgColor = 'FFF7A8E6'; // ピンク
+                else if (index === 6) bgColor = 'FFA0C8EF'; // 水色
                 
                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
                 cell.border = { top: {style:'medium'}, left: {style:'medium'}, bottom: {style:'medium'}, right: {style:'medium'} };
             });
 
+            // カレンダーロジック
             let dateObj = new Date(year, month - 1, 1);
             const firstDay = dateObj.getDay();
             dateObj.setDate(1 - firstDay);
@@ -1518,7 +1316,7 @@
                 const rowSecond = worksheet.getRow(currentRowNum + 2);
 
                 rowDate.height = 18;
-                rowFirst.height = 28; 
+                rowFirst.height = 28; // 1stは大きめ
                 rowSecond.height = 22;
 
                 for (let d = 0; d < 7; d++) {
@@ -1531,13 +1329,14 @@
                     const dayNum = dateObj.getDate();
                     const isTargetMonth = currentMonth === month;
                     
+                    // 背景色の決定
                     let bgColor = 'FFFFFFFF'; 
                     if (!isTargetMonth) {
-                        bgColor = 'FFBFBFBF'; 
+                        bgColor = 'FFBFBFBF'; // 対象月外はグレー
                     } else if (d === 0 || globalHolidays.has(dayNum)) {
-                        bgColor = 'FFF7A8E6'; 
+                        bgColor = 'FFF7A8E6'; // 日曜・休診日ピンク
                     } else if (d === 6) {
-                        bgColor = 'FFA0C8EF'; 
+                        bgColor = 'FFA0C8EF'; // 土曜水色
                     }
 
                     const fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
@@ -1545,15 +1344,18 @@
                     cellFirst.fill = fill;
                     cellSecond.fill = fill;
 
+                    // 文字位置（中央揃え）
                     const alignCenter = { horizontal: 'center', vertical: 'middle' };
                     cellDate.alignment = alignCenter;
                     cellFirst.alignment = alignCenter;
                     cellSecond.alignment = alignCenter;
 
+                    // フォント設定 (1stは大きく太字、2ndは小さく少しグレー)
                     cellDate.font = { name: 'ＭＳ Ｐゴシック', size: 10 };
                     cellFirst.font = { name: 'ＭＳ Ｐゴシック', size: 14, bold: true, color: { argb: 'FF000000' } };
                     cellSecond.font = { name: 'ＭＳ Ｐゴシック', size: 10, color: { argb: 'FF555555' } };
 
+                    // 値の代入
                     if (isTargetMonth) {
                         cellDate.value = dayNum;
                         if (schedMap[dayNum]) {
@@ -1564,6 +1366,7 @@
                         }
                     }
 
+                    // 罫線の設定 (各日の外枠を太枠[medium]、内側を細線[thin])
                     const thick = { style: 'medium' };
                     const thin = { style: 'thin' };
 
@@ -1571,6 +1374,7 @@
                     cellFirst.border = { left: thick, right: thick, bottom: thin };
                     cellSecond.border = { left: thick, right: thick, bottom: thick };
 
+                    // 日付を1日進める
                     dateObj.setDate(dateObj.getDate() + 1);
                 }
                 
